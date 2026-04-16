@@ -84,16 +84,8 @@ def main() -> None:
     source_country_code = args.source_country_code
     destination_country_code = args.destination_country_code
     try:
-        while True:
-            vfs_bot = get_vfs_bot(source_country_code, destination_country_code)
-            appointment_found = vfs_bot.run(args)
-            if appointment_found:
-                break
-            countdown(
-                int(get_config_value("default", "interval")),
-                "Next appointment check in",
-            )
-
+        vfs_bot = get_vfs_bot(source_country_code, destination_country_code)
+        vfs_bot.run(args)
     except (UnsupportedCountryError, LoginError) as e:
         logging.error(e)
     except Exception as e:
