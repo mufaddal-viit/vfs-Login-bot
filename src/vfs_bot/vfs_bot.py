@@ -9,10 +9,7 @@ import playwright
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
 
-from vfs_appointment_bot.utils.config_reader import get_config_value
-from vfs_appointment_bot.notification.notification_client_factory import (
-    get_notification_client,
-)
+from src.utils.config_reader import get_config_value
 
 SCREENSHOT_DIR = "screenshots"
 
@@ -156,31 +153,6 @@ class VfsBot(ABC):
                 key_name = key.replace("_", " ")
                 appointment_params[key] = input(f"Enter the {key_name}: ")
         return appointment_params
-
-    def notify_appointment(self, appointment_params: Dict[str, str], dates: List[str]):
-        """
-        Sends appointment dates notification to the user.
-
-        This method is responsible for notifying the appointment dates to the user configured channels
-
-        Args:
-            dates (List[str]): A list of appointment dates.
-            appointment_params (Dict[str, str]): A dictionary containing appointment search criteria.
-        """
-        message = f"Found appointment(s) for {', '.join(appointment_params.values())} on {', '.join(dates)}"
-        channels = get_config_value("notification", "channels")
-        if len(channels) == 0:
-            logging.warning(
-                "No notification channels configured. Skipping notification."
-            )
-            return
-
-        for channel in channels.split(","):
-            client = get_notification_client(channel)
-            try:
-                client.send_notification(message)
-            except Exception:
-                logging.error(f"Failed to send {channel} notification")
 
     @abstractmethod
     def login(

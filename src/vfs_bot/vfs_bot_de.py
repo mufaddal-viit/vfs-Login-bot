@@ -3,8 +3,8 @@ from typing import Dict, List, Optional
 
 from playwright.sync_api import Page
 
-from vfs_appointment_bot.utils.date_utils import extract_date_from_string
-from vfs_appointment_bot.vfs_bot.vfs_bot import VfsBot
+from src.utils.date_utils import extract_date_from_string
+from src.vfs_bot.vfs_bot import VfsBot
 
 
 class VfsBotDe(VfsBot):

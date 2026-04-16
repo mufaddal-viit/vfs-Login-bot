@@ -3,10 +3,9 @@ import logging
 import sys
 from typing import Dict
 
-from vfs_appointment_bot.utils.config_reader import get_config_value, initialize_config
-from vfs_appointment_bot.utils.timer import countdown
-from vfs_appointment_bot.vfs_bot.vfs_bot import LoginError
-from vfs_appointment_bot.vfs_bot.vfs_bot_factory import (
+from src.utils.config_reader import initialize_config
+from src.vfs_bot.vfs_bot import LoginError
+from src.vfs_bot.vfs_bot_factory import (
     UnsupportedCountryError,
     get_vfs_bot,
 )

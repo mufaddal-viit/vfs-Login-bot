@@ -1,4 +1,4 @@
-from vfs_appointment_bot.vfs_bot.vfs_bot import VfsBot
+from src.vfs_bot.vfs_bot import VfsBot
 
 
 class UnsupportedCountryError(Exception):
