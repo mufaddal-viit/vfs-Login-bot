@@ -1,9 +1,7 @@
-import argparse
 import logging
 import os
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, List
 
 import playwright
 from playwright.sync_api import sync_playwright
@@ -22,40 +20,27 @@ class VfsBot(ABC):
     """
     Abstract base class for VfsBot
 
-    Provides common functionalities like login, pre-login steps, appointment checking, and notification.
-    Subclasses are responsible for implementing country-specific login and appointment checking logic.
+    Provides the login flow skeleton. Subclasses implement country-specific
+    login and pre-login steps.
     """
 
     def __init__(self):
-        """
-        Initializes a VfsBot instance for a specific country.
-
-        """
         self.source_country_code = None
         self.destination_country_code = None
-        self.appointment_param_keys: List[str] = []
 
-    def run(self, args: argparse.Namespace = None) -> bool:
+    def run(self) -> bool:
         """
-        Starts the VFS bot for appointment checking and notification.
-
-        This method reads configuration values, performs login, checks for
-        appointments based on provided arguments, and sends notifications if
-        appointments are found.
-
-        Args:
-            args (argparse.Namespace, optional): Namespace object containing parsed
-                command-line arguments. Defaults to None.
+        Runs the VFS login flow: connects to the browser, navigates to the
+        VFS login URL, performs pre-login steps, and logs in.
 
         Returns:
-            bool: True if appointments were found, False otherwise.
+            bool: Always False (login-only flow).
         """
 
         logging.info(
             f"Starting VFS Bot for {self.source_country_code.upper()}-{self.destination_country_code.upper()}"
         )
 
-        # Configuration values
         try:
             browser_type = get_config_value("browser", "type", "firefox")
             headless_mode = get_config_value("browser", "headless", "True")
@@ -68,9 +53,6 @@ class VfsBot(ABC):
         email_id = get_config_value("vfs-credential", "email")
         password = get_config_value("vfs-credential", "password")
 
-        appointment_params = self.get_appointment_params(args)
-
-        # Ensure screenshot directory exists
         os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
         # Launch browser and perform actions
@@ -128,43 +110,12 @@ class VfsBot(ABC):
         except Exception as e:
             logging.warning(f"Failed to take screenshot '{name}': {e}")
 
-    def get_appointment_params(self, args: argparse.Namespace) -> Dict[str, str]:
-        """
-        Collects appointment parameters from command-line arguments or user input.
-
-        This method iterates through pre-defined `appointment_param_keys` (replace
-        with relevant keys) and retrieves values either from provided arguments
-        or prompts the user for input if values are missing.
-
-        Args:
-            args (argparse.Namespace): Namespace object containing parsed command-line arguments.
-
-        Returns:
-            Dict[str, str]: A dictionary containing appointment parameters.
-        """
-        appointment_params = {}
-        for key in self.appointment_param_keys:
-            if (
-                getattr(args, "appointment_params") is not None
-                and args.appointment_params[key] is not None
-            ):
-                appointment_params[key] = args.appointment_params[key]
-            else:
-                key_name = key.replace("_", " ")
-                appointment_params[key] = input(f"Enter the {key_name}: ")
-        return appointment_params
-
     @abstractmethod
     def login(
         self, page: playwright.sync_api.Page, email_id: str, password: str
     ) -> None:
         """
         Performs login steps specific to the VFS website for the bot's country.
-
-        This abstract method needs to be implemented by subclasses to handle
-        country-specific login procedures (e.g., filling login form elements, handling
-        CAPTCHAs). It should interact with the Playwright `page` object to achieve
-        login functionality.
 
         Args:
             page (playwright.sync_api.Page): The Playwright page object used for browser interaction.
@@ -179,35 +130,8 @@ class VfsBot(ABC):
     @abstractmethod
     def pre_login_steps(self, page: playwright.sync_api.Page) -> None:
         """
-        Performs any pre-login steps required by the VFS website for the bot's country.
-
-        This abstract method allows subclasses to implement country-specific actions
-        that need to be done before login (e.g., cookie acceptance, language selection).
-        It should interact with the Playwright `page` object to perform these actions.
+        Performs any pre-login steps required by the VFS website (e.g., cookie consent).
 
         Args:
             page (playwright.sync_api.Page): The Playwright page object used for browser interaction.
         """
-
-    @abstractmethod
-    def check_for_appontment(
-        self, page: playwright.sync_api.Page, appointment_params: Dict[str, str]
-    ) -> List[str]:
-        """
-        Checks for appointments based on provided parameters on the VFS website.
-
-        This abstract method needs to be implemented by subclasses to interact with
-        the VFS website and search for appointments based on the given `appointment_params`
-        dictionary. It should use the Playwright `page` object to navigate the website
-        and extract appointment dates.
-
-        Args:
-            page (playwright.sync_api.Page): The Playwright page object used for browser interaction.
-            appointment_params (Dict[str, str]): A dictionary containing appointment search criteria.
-
-        Returns:
-            List[str]: A list of available appointment dates (empty list if none found).
-        """
-        raise NotImplementedError(
-            "Subclasses must implement appointment checking logic"
-        )

@@ -2,7 +2,6 @@
 
 An automated login bot for the **VFS Global** visa appointment portal. Built with **Python** and **Playwright**, this tool opens your Chrome browser, navigates to the VFS login page, bypasses the Cloudflare Turnstile challenge, and signs you in with your credentials — capturing screenshots at every step for debugging.
 
-
 ## Features
 
 - **Cloudflare Turnstile bypass** using Chrome's remote debugging protocol (CDP)
@@ -60,6 +59,50 @@ You launch Chrome with --remote-debugging-port=9222
 
 ---
 
+## Challenges Overcome
+
+VFS Global is one of the hardest portals to automate. Here's what this project had to work around:
+
+### 1. Cloudflare Bot Management
+
+VFS sits behind Cloudflare's enterprise bot protection, which blocks roughly 15% of traffic as automated. It detects bots via:
+
+- **JA3 TLS fingerprinting** — identifies automation libraries by their TLS handshake signature
+- **Behavioral analysis** — scoring mouse movement, scroll patterns, and timing
+- **Traffic pattern detection** — flagging anything that doesn't look like a real user session
+
+**How we bypass it:** the bot never launches its own browser. Instead, it connects via CDP (Chrome DevTools Protocol) to a real Chrome instance the user starts manually. Cloudflare sees a genuine browser fingerprint and lets it through.
+
+### 2. Cloudflare Turnstile Challenge
+
+The login flow includes a `cf-turnstile-response` token, confirmed via request payloads in dev tools. A Playwright-launched browser fails the Turnstile check and the page never finishes loading.
+
+**How we bypass it:** since we're driving a real Chrome instance (not a Playwright-spawned one), Turnstile passes naturally — no token-solving service required.
+
+### 3. Rate Limiting
+
+VFS enforces strict limits on:
+
+- Login attempts
+- Calendar / appointment checks
+- Registration attempts
+
+Hit the limit and your account or IP gets temporarily blocked.
+
+**How we handle it:** this bot is login-only and runs on demand — no polling loops, no appointment scraping. One invocation = one login attempt. Stay well under any threshold.
+
+### 4. Cloudflare WAF (Web Application Firewall)
+
+The WAF layer blocks:
+
+- OWASP Top 10 attack patterns
+- Direct API hits (e.g. requests straight to `/login`)
+- Suspicious payloads and unusual request structures
+
+**How we handle it:** the bot drives the actual Angular UI — filling inputs, clicking buttons — so every request originates from the real browser with legitimate headers, cookies, and session state. No direct API calls.
+
+---
+
 ## Supported Countries
 
 | Source Country  | Destination  | URL                                   |
@@ -88,7 +131,7 @@ Add more URLs to [config/vfs_urls.ini](config/vfs_urls.ini) to extend support.
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/<your-username>/vfs-login-bot.git
+git clone https://github.com/mufaddal-viit/vfs-Login-bot.git
 cd vfs-login-bot
 ```
 
@@ -110,12 +153,6 @@ source venv/Scripts/activate
 
 ```cmd
 venv\Scripts\activate
-```
-
-**macOS / Linux:**
-
-```bash
-source venv/bin/activate
 ```
 
 ### 4. Install dependencies
@@ -174,22 +211,6 @@ Close all existing Chrome windows first, then open a terminal:
   --user-data-dir="$TEMP/vfs-chrome-profile"
 ```
 
-**macOS:**
-
-```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir="/tmp/vfs-chrome-profile"
-```
-
-**Linux:**
-
-```bash
-google-chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir="/tmp/vfs-chrome-profile"
-```
-
 > The `--user-data-dir` flag uses a throwaway profile so this Chrome instance doesn't interfere with your regular browser.
 
 ### Step 2 — Export the config path (if outside the repo)
@@ -201,18 +222,15 @@ export VFS_BOT_CONFIG_PATH="/absolute/path/to/config/config.ini"
 ### Step 3 — Run the bot
 
 ```bash
-vfs-login-bot -sc IN -dc DE -ap "visa_center=X,visa_category=Y,visa_sub_category=Z"
+vfs-login-bot -sc IN -dc DE
 ```
 
 **Command-line arguments:**
 
-| Flag  | Long form                    | Description                                  | Required |
-| ----- | ---------------------------- | -------------------------------------------- | -------- |
-| `-sc` | `--source-country-code`      | ISO 3166-1 alpha-2 source country            | Yes      |
-| `-dc` | `--destination-country-code` | ISO 3166-1 alpha-2 destination country       | Yes      |
-| `-ap` | `--appointment-params`       | `key=value,key=value` appointment parameters | No       |
-
-If `-ap` is omitted, the bot will prompt interactively for each parameter.
+| Flag  | Long form                    | Description                            | Required |
+| ----- | ---------------------------- | -------------------------------------- | -------- |
+| `-sc` | `--source-country-code`      | ISO 3166-1 alpha-2 source country      | Yes      |
+| `-dc` | `--destination-country-code` | ISO 3166-1 alpha-2 destination country | Yes      |
 
 ---
 
@@ -226,9 +244,7 @@ vfs-login-bot/
 ├── src/
 │   ├── main.py             # Entry point & CLI argument parsing
 │   ├── utils/
-│   │   ├── config_reader.py
-│   │   ├── date_utils.py
-│   │   └── timer.py
+│   │   └── config_reader.py
 │   └── vfs_bot/
 │       ├── vfs_bot.py         # Abstract base class (shared logic)
 │       ├── vfs_bot_de.py      # Germany implementation
@@ -239,59 +255,6 @@ vfs-login-bot/
 ├── pyproject.toml
 └── README.md
 ```
-
----
-
-## Screenshots
-
-Each run generates timestamped screenshots in `screenshots/`:
-
-| Filename                             | Captures                         |
-| ------------------------------------ | -------------------------------- |
-| `<timestamp>_01_page_loaded.png`     | Initial page after navigation    |
-| `<timestamp>_02_pre_login_done.png`  | After cookie banner handling     |
-| `<timestamp>_03_after_sign_in.png`   | 3 seconds after clicking Sign In |
-| `<timestamp>_ERROR_login_failed.png` | If login raises an exception     |
-
-These are invaluable for debugging selector changes or auth failures.
-
----
-
-## Troubleshooting
-
-### `ECONNREFUSED ::1:9222`
-
-Chrome isn't running with `--remote-debugging-port=9222`. Launch it per Step 1.
-
-### Page stuck on loading spinner
-
-- Make sure you launched Chrome **manually** with the flags above, not through the bot
-- Cloudflare may be aggressively challenging — try waiting 30 seconds before running the bot
-- Confirm you're not behind a VPN that VFS blocks
-
-### `ModuleNotFoundError: No module named 'pkg_resources'`
-
-`setuptools` ≥ 81 removed `pkg_resources`. Install an older version:
-
-```bash
-pip install "setuptools<81"
-```
-
-### `ModuleNotFoundError: No module named 'src'`
-
-You need to reinstall the package after structural changes:
-
-```bash
-pip install -e .
-```
-
-### Login says "email not registered"
-
-The credentials in `config.ini` are invalid. Verify by logging in manually on the VFS website first.
-
-### VFS login throttling
-
-VFS temporarily blocks accounts that log in too frequently. If you hit this, wait **at least 2 hours** before retrying.
 
 ---
 
@@ -306,7 +269,6 @@ VFS temporarily blocks accounts that log in too frequently. If you hit this, wai
 2. Create a new bot class `src/vfs_bot/vfs_bot_yy.py` extending `VfsBot` and implement:
    - `login()`
    - `pre_login_steps()`
-   - `check_for_appontment()`
 
 3. Register it in [src/vfs_bot/vfs_bot_factory.py](src/vfs_bot/vfs_bot_factory.py)
 
