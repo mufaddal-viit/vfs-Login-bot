@@ -1,6 +1,8 @@
 import argparse
 import logging
+import os
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Dict, List
 
 import playwright
@@ -11,6 +13,8 @@ from vfs_appointment_bot.utils.config_reader import get_config_value
 from vfs_appointment_bot.notification.notification_client_factory import (
     get_notification_client,
 )
+
+SCREENSHOT_DIR = "screenshots"
 
 
 class LoginError(Exception):
@@ -69,47 +73,63 @@ class VfsBot(ABC):
 
         appointment_params = self.get_appointment_params(args)
 
+        # Ensure screenshot directory exists
+        os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+
         # Launch browser and perform actions
         with sync_playwright() as p:
-            browser = getattr(p, browser_type).launch(
-                headless=headless_mode in ("True", "true")
-            )
-            page = browser.new_page()
-            stealth_sync(page)
+            cdp_url = get_config_value("browser", "cdp_url")
+            if cdp_url:
+                # Connect to an existing Chrome launched with --remote-debugging-port
+                logging.info(f"Connecting to Chrome via CDP: {cdp_url}")
+                browser = p.chromium.connect_over_cdp(cdp_url)
+                context = browser.contexts[0] if browser.contexts else browser.new_context()
+                page = context.new_page()
+            else:
+                is_headless = headless_mode in ("True", "true")
+                launch_args = {}
+                if browser_type == "chromium":
+                    launch_args["args"] = [
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                    ]
+                browser = getattr(p, browser_type).launch(
+                    headless=is_headless, **launch_args
+                )
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 720},
+                )
+                page = context.new_page()
+                stealth_sync(page)
 
-            page.goto(vfs_url)
+            logging.info(f"Navigating to {vfs_url}")
+            page.goto(vfs_url, timeout=60000, wait_until="domcontentloaded")
+            self._take_screenshot(page, "01_page_loaded")
+
             self.pre_login_steps(page)
+            self._take_screenshot(page, "02_pre_login_done")
 
             try:
                 self.login(page, email_id, password)
-                logging.info("Logged in successfully")
-            except Exception:
-                browser.close()
-                raise LoginError(
-                    "\033[1;31mLogin failed. "
-                    + "Please verify your username and password by logging in to the browser and try again.\033[0m"
-                )
-
-            logging.info(f"Checking appointments for {appointment_params}")
-            appointment_found = False
-            try:
-                dates = self.check_for_appontment(page, appointment_params)
-                if dates:
-                    # Log successful appointment finding
-                    logging.info(
-                        f"\033[1;32mFound appointments on: {', '.join(dates)} \033[0m"
-                    )
-                    self.notify_appointment(appointment_params, dates)
-                    appointment_found = True
-                else:
-                    # Log no appointments found
-                    logging.info(
-                        "\033[1;33mNo appointments found for the specified criteria.\033[0m"
-                    )
+                logging.info("Login flow completed. Check screenshots for result.")
             except Exception as e:
-                logging.error(f"Appointment check failed: {e}")
-            browser.close()
-            return appointment_found
+                self._take_screenshot(page, "ERROR_login_failed")
+                logging.error(f"Login error details: {e}")
+            finally:
+                page.close()
+                browser.close()
+                logging.info("Browser closed cleanly.")
+            return False
+
+    @staticmethod
+    def _take_screenshot(page, name: str):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(SCREENSHOT_DIR, f"{timestamp}_{name}.png")
+        try:
+            page.screenshot(path=path, full_page=True)
+            logging.info(f"Screenshot saved: {path}")
+        except Exception as e:
+            logging.warning(f"Failed to take screenshot '{name}': {e}")
 
     def get_appointment_params(self, args: argparse.Namespace) -> Dict[str, str]:
         """

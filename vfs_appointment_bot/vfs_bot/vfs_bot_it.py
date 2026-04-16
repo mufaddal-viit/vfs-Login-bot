@@ -59,14 +59,20 @@ class VfsBotIt(VfsBot):
         Raises:
             Exception: If login fails due to unexpected errors or missing "Start New Booking" button.
         """
-        email_input = page.locator("#mat-input-0")
-        password_input = page.locator("#mat-input-1")
+        # Wait for login form to be ready (VFS can take a while to load behind Cloudflare)
+        page.wait_for_selector("input[formcontrolname='username'], #mat-input-0, input[placeholder*='email']", timeout=120000)
+        logging.info("Login form loaded")
+
+        email_input = page.locator("input[formcontrolname='username'], #mat-input-0, input[placeholder*='email']").first
+        password_input = page.locator("input[formcontrolname='password'], #mat-input-1, input[type='password']").first
 
         email_input.fill(email_id)
         password_input.fill(password)
 
         page.get_by_role("button", name="Sign In").click()
-        page.wait_for_selector("role=button >> text=Start New Booking")
+        logging.info("Clicked Sign In")
+        page.wait_for_timeout(3000)
+        VfsBot._take_screenshot(page, "03_after_sign_in")
 
     def pre_login_steps(self, page: Page) -> None:
         """
@@ -79,9 +85,11 @@ class VfsBotIt(VfsBot):
             page (playwright.sync_api.Page): The Playwright page object used for browser interaction.
         """
         policies_reject_button = page.get_by_role("button", name="Reject All")
-        if policies_reject_button is not None:
-            policies_reject_button.click()
+        try:
+            policies_reject_button.click(timeout=5000)
             logging.debug("Rejected all cookie policies")
+        except Exception:
+            logging.debug("No cookie policy button found, skipping")
 
     def check_for_appontment(
         self, page: Page, appointment_params: Dict[str, str]
