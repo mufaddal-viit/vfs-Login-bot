@@ -39,16 +39,19 @@ You launch Chrome with --remote-debugging-port=9222
   Cloudflare Turnstile passes (real browser)
                  │
                  ▼
-    Screenshot: 01_page_loaded.png
-                 │
-                 ▼
    Dismiss cookie banner (if present)
                  │
                  ▼
-    Screenshot: 02_pre_login_done.png
+    Screenshot: 01_pre_login_done.png
                  │
                  ▼
-    Fill email + password → Click Sign In
+       Fill email + password
+                 │
+                 ▼
+    Screenshot: 02_before_sign_in.png
+                 │
+                 ▼
+           Click Sign In
                  │
                  ▼
     Screenshot: 03_after_sign_in.png
@@ -223,6 +226,13 @@ export VFS_BOT_CONFIG_PATH="/absolute/path/to/config/config.ini"
 
 ```bash
 vfs-login-bot -sc IN -dc DE
+```
+
+### Step 4 — All in one command after chrome debug opened
+
+```bash
+cd "/c/Users/DELL/Documents/GitHub/New folder/vfs-login-bot" && source venv/Scripts/activate && export VFS_BOT_CONFIG_PATH="c:/Users/DELL/Documents/GitHub/New folder/vfs-login-bot/config/config.ini" && vfs-login-bot -sc IN -dc DE
+
 ```
 
 **Command-line arguments:**

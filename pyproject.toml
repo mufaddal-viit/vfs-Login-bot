@@ -1,17 +1,18 @@
 # Project metadata
 [tool.poetry]
-name = "vfs-appointment-bot"
-version = "1.1.1"
-description = "VFS Appointment Bot - This script automates checking for appointments at VFS Global offices in a specified country."
-authors = ["Ranjan Mohanty <ranjan@duck.com>"]
+name = "vfs-login-bot"
+version = "1.0.0"
+description = "VFS Login Bot - Automates login to VFS Global visa appointment portal."
+authors = ["Mufaddal <calcutta53.mufaddal@gmail.com>"]
 license = "MIT"
 readme = "README.md"
-keywords = ["vfs", "vfs-bot", "vfs-appointment-bot", "visa-appointment-bot"]
+keywords = ["vfs", "vfs-bot", "vfs-login-bot", "visa-login-bot"]
+packages = [{ include = "src" }]
 
 # URLs
 [tool.poetry.urls]
-repository = "https://github.com/ranjan-mohanty/vfs-appointment-bot/blob/main/README.md"
-homepage = "https://github.com/ranjan-mohanty/vfs-appointment-bot/blob/main"
+repository = "https://github.com/mufaddal-viit/vfs-Login-bot"
+homepage = "https://github.com/mufaddal-viit/vfs-Login-bot"
 
 # Build System
 [build-system]

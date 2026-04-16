@@ -83,10 +83,9 @@ class VfsBot(ABC):
 
             logging.info(f"Navigating to {vfs_url}")
             page.goto(vfs_url, timeout=60000, wait_until="domcontentloaded")
-            self._take_screenshot(page, "01_page_loaded")
 
             self.pre_login_steps(page)
-            self._take_screenshot(page, "02_pre_login_done")
+            self._take_screenshot(page, "01_pre_login_done")
 
             try:
                 self.login(page, email_id, password)

@@ -43,6 +43,7 @@ class VfsBotDe(VfsBot):
 
         email_input.fill(email_id)
         password_input.fill(password)
+        VfsBot._take_screenshot(page, "02_before_sign_in")
 
         page.get_by_role("button", name="Sign In").click()
         logging.info("Clicked Sign In")
