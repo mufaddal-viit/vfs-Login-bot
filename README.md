@@ -219,9 +219,7 @@ password = YourPassword123
 
 Close all existing Chrome windows first, then open a terminal and pick **one** of the two modes below.
 
-> Why not fully headless? `--headless=new` is aggressively fingerprinted by Cloudflare Bot Management and will get blocked at the Turnstile step. The "hidden" mode below runs full, real Chrome — just pushed off-screen — so the bypass still works while nothing visible appears.
-
-#### Mode A — Visible window (default, easiest to debug)
+#### Mode A — Headed mode (headful) -- Visible window
 
 **Windows (Git Bash):**
 
@@ -231,7 +229,7 @@ Close all existing Chrome windows first, then open a terminal and pick **one** o
   --user-data-dir="$TEMP/vfs-chrome-profile"
 ```
 
-#### Mode B — Hidden / off-screen (no UI, background run)
+#### Mode B — Headless mode / (no UI, background run)
 
 **Windows (Git Bash):**
 
@@ -241,14 +239,6 @@ Close all existing Chrome windows first, then open a terminal and pick **one** o
   --user-data-dir="$TEMP/vfs-chrome-profile" \
   --window-position=-32000,-32000 \
   --window-size=1280,720
-```
-
-**Windows (PowerShell) — launches Chrome minimized and detached:**
-
-```powershell
-Start-Process -WindowStyle Minimized `
-  -FilePath "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-  -ArgumentList '--remote-debugging-port=9222', "--user-data-dir=$env:TEMP\vfs-chrome-profile"
 ```
 
 > The `--user-data-dir` flag uses a throwaway profile so this Chrome instance doesn't interfere with your regular browser. Use Task Manager (or `taskkill //F //PID <pid>`) to stop it when you're done.
@@ -268,7 +258,7 @@ vfs-login-bot -sc IN -dc DE
 ### Step 4 — All in one command after chrome debug opened
 
 ```bash
-cd "/c/Users/DELL/Documents/GitHub/New folder/vfs-login-bot" && source venv/Scripts/activate && export VFS_BOT_CONFIG_PATH="c:/Users/DELL/Documents/GitHub/New folder/vfs-login-bot/config/config.ini" && vfs-login-bot -sc IN -dc DE
+cd "/c/Users/DELL/Documents/GitHub/New folder/vfs-login-bot" && source venv/Scripts/activate && export VFS_BOT_CONFIG_PATH="c:/Users/DELL/Documents/GitHub/New folder/vfs-login-bot/config/config.ini" && vfs-login-bot -sc AE -dc MT
 
 ```
 
