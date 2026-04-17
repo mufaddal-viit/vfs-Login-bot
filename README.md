@@ -217,7 +217,11 @@ password = YourPassword123
 
 ### Step 1 — Launch Chrome with remote debugging
 
-Close all existing Chrome windows first, then open a terminal:
+Close all existing Chrome windows first, then open a terminal and pick **one** of the two modes below.
+
+> Why not fully headless? `--headless=new` is aggressively fingerprinted by Cloudflare Bot Management and will get blocked at the Turnstile step. The "hidden" mode below runs full, real Chrome — just pushed off-screen — so the bypass still works while nothing visible appears.
+
+#### Mode A — Visible window (default, easiest to debug)
 
 **Windows (Git Bash):**
 
@@ -227,7 +231,27 @@ Close all existing Chrome windows first, then open a terminal:
   --user-data-dir="$TEMP/vfs-chrome-profile"
 ```
 
-> The `--user-data-dir` flag uses a throwaway profile so this Chrome instance doesn't interfere with your regular browser.
+#### Mode B — Hidden / off-screen (no UI, background run)
+
+**Windows (Git Bash):**
+
+```bash
+"/c/Program Files/Google/Chrome/Application/chrome.exe" \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$TEMP/vfs-chrome-profile" \
+  --window-position=-32000,-32000 \
+  --window-size=1280,720
+```
+
+**Windows (PowerShell) — launches Chrome minimized and detached:**
+
+```powershell
+Start-Process -WindowStyle Minimized `
+  -FilePath "C:\Program Files\Google\Chrome\Application\chrome.exe" `
+  -ArgumentList '--remote-debugging-port=9222', "--user-data-dir=$env:TEMP\vfs-chrome-profile"
+```
+
+> The `--user-data-dir` flag uses a throwaway profile so this Chrome instance doesn't interfere with your regular browser. Use Task Manager (or `taskkill //F //PID <pid>`) to stop it when you're done.
 
 ### Step 2 — Export the config path (if outside the repo)
 
