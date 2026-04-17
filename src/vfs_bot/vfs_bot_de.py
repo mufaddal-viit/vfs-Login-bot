@@ -49,7 +49,14 @@ class VfsBotDe(VfsBot):
         logging.info("Clicked Sign In")
         page.wait_for_timeout(3000)
         VfsBot._take_screenshot(page, "03_after_sign_in")
-        page.wait_for_timeout(3000)
+
+        try:
+            page.wait_for_url("**/dashboard", timeout=60000)
+            logging.info(f"Reached dashboard: {page.url}")
+            page.wait_for_timeout(2000)
+            VfsBot._take_screenshot(page, "04_dashboard")
+        except Exception as e:
+            logging.warning(f"Did not reach /dashboard: {e}")
 
     def pre_login_steps(self, page: Page) -> None:
         """

@@ -5,8 +5,8 @@ from playwright.sync_api import Page
 from src.vfs_bot.vfs_bot import VfsBot
 
 
-class VfsBotIt(VfsBot):
-    """Concrete implementation of VfsBot for Italy (IT).
+class VfsBotMt(VfsBot):
+    """Concrete implementation of VfsBot for Malta (MT).
 
     Overrides:
     - `login`: Fills the login form and clicks Sign In.
@@ -16,30 +16,29 @@ class VfsBotIt(VfsBot):
     def __init__(self, source_country_code: str):
         super().__init__()
         self.source_country_code = source_country_code
-        self.destination_country_code = "IT"
+        self.destination_country_code = "MT"
 
     def login(self, page: Page, email_id: str, password: str) -> None:
         """
-        Performs login steps specific to the Italy VFS website.
-
-        This method fills the email and password input fields on the login form
-        and clicks the "Sign In" button. It raises an exception if the login fails
-        (e.g., if the "Start New Booking" button is not found after login).
+        Performs login steps for the Malta VFS website.
 
         Args:
             page (playwright.sync_api.Page): The Playwright page object used for browser interaction.
             email_id (str): The user's email address for VFS login.
             password (str): The user's password for VFS login.
-
-        Raises:
-            Exception: If login fails due to unexpected errors or missing "Start New Booking" button.
         """
-        # Wait for login form to be ready (VFS can take a while to load behind Cloudflare)
-        page.wait_for_selector("input[formcontrolname='username'], #mat-input-0, input[placeholder*='email']", timeout=120000)
+        page.wait_for_selector(
+            "input[formcontrolname='username'], #mat-input-0, input[placeholder*='email']",
+            timeout=120000,
+        )
         logging.info("Login form loaded")
 
-        email_input = page.locator("input[formcontrolname='username'], #mat-input-0, input[placeholder*='email']").first
-        password_input = page.locator("input[formcontrolname='password'], #mat-input-1, input[type='password']").first
+        email_input = page.locator(
+            "input[formcontrolname='username'], #mat-input-0, input[placeholder*='email']"
+        ).first
+        password_input = page.locator(
+            "input[formcontrolname='password'], #mat-input-1, input[type='password']"
+        ).first
 
         email_input.fill(email_id)
         password_input.fill(password)
@@ -60,10 +59,7 @@ class VfsBotIt(VfsBot):
 
     def pre_login_steps(self, page: Page) -> None:
         """
-        Performs pre-login steps specific to the Italy VFS website.
-
-        This method checks for a "Reject All" button for cookie policies and
-        clicks it if found.
+        Dismisses the cookie consent banner if present.
 
         Args:
             page (playwright.sync_api.Page): The Playwright page object used for browser interaction.

@@ -57,6 +57,12 @@ You launch Chrome with --remote-debugging-port=9222
     Screenshot: 03_after_sign_in.png
                  │
                  ▼
+     Wait for URL → **/dashboard
+                 │
+                 ▼
+    Screenshot: 04_dashboard.png
+                 │
+                 ▼
          Browser closes cleanly
 ```
 
@@ -114,6 +120,7 @@ The WAF layer blocks:
 | Iraq (IQ)       | Germany (DE) | `visa.vfsglobal.com/irq/en/deu/login` |
 | Morocco (MA)    | Italy (IT)   | `visa.vfsglobal.com/mar/en/ita/login` |
 | Azerbaijan (AZ) | Italy (IT)   | `visa.vfsglobal.com/aze/en/ita/login` |
+| UAE (AE)        | Malta (MT)   | `visa.vfsglobal.com/are/en/mlt/login` |
 
 Country codes follow [ISO 3166-1 alpha-2](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2).
 
