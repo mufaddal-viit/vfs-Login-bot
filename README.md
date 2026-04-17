@@ -63,6 +63,12 @@ You launch Chrome with --remote-debugging-port=9222
     Screenshot: 04_dashboard.png
                  │
                  ▼
+          Click Sign Out
+                 │
+                 ▼
+    Screenshot: 05_after_sign_out.png
+                 │
+                 ▼
          Browser closes cleanly
 ```
 

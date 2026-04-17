@@ -109,6 +109,22 @@ class VfsBot(ABC):
         except Exception as e:
             logging.warning(f"Failed to take screenshot '{name}': {e}")
 
+    @staticmethod
+    def _sign_out(page) -> None:
+        """
+        Clicks the Sign Out control on the VFS dashboard, logs the result,
+        and captures a screenshot of the post-logout state.
+        """
+        try:
+            page.wait_for_timeout(2000)
+            page.get_by_text("Sign Out", exact=True).first.click(timeout=10000)
+            logging.info("Clicked Sign Out")
+            page.wait_for_timeout(3000)
+            VfsBot._take_screenshot(page, "05_after_sign_out")
+            logging.info(f"Signed out successfully. Final URL: {page.url}")
+        except Exception as e:
+            logging.warning(f"Sign out failed: {e}")
+
     @abstractmethod
     def login(
         self, page: playwright.sync_api.Page, email_id: str, password: str

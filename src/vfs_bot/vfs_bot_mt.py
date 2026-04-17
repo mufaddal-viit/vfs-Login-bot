@@ -40,13 +40,22 @@ class VfsBotMt(VfsBot):
             "input[formcontrolname='password'], #mat-input-1, input[type='password']"
         ).first
 
-        email_input.fill(email_id)
-        password_input.fill(password)
+        email_input.click()
+        page.wait_for_timeout(800)
+        email_input.press_sequentially(email_id, delay=200)
+        page.wait_for_timeout(1200)
+
+        password_input.click()
+        page.wait_for_timeout(800)
+        password_input.press_sequentially(password, delay=200)
+        page.wait_for_timeout(1500)
+
         VfsBot._take_screenshot(page, "02_before_sign_in")
+        page.wait_for_timeout(1500)
 
         page.get_by_role("button", name="Sign In").click()
         logging.info("Clicked Sign In")
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(4000)
         VfsBot._take_screenshot(page, "03_after_sign_in")
 
         try:
@@ -54,6 +63,7 @@ class VfsBotMt(VfsBot):
             logging.info(f"Reached dashboard: {page.url}")
             page.wait_for_timeout(2000)
             VfsBot._take_screenshot(page, "04_dashboard")
+            VfsBot._sign_out(page)
         except Exception as e:
             logging.warning(f"Did not reach /dashboard: {e}")
 
