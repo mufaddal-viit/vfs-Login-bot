@@ -37,6 +37,10 @@ def get_vfs_bot(source_country_code: str, destination_country_code: str) -> VfsB
         from .vfs_bot_mt import VfsBotMt
 
         return VfsBotMt(source_country_code)
+    elif country_lower == "LU":
+        from .vfs_bot_lu import VfsBotLu
+
+        return VfsBotLu(source_country_code)
     else:
         raise UnsupportedCountryError(
             f"Country {destination_country_code} is not supported"
