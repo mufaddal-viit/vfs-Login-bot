@@ -352,8 +352,8 @@ class VfsBot(ABC):
 
         VfsBot._take_screenshot(page, "09_your_details_filled")
 
-        if all_filled:
-            VfsBot._click_save(page)
+        if all_filled and VfsBot._click_save(page):
+            VfsBot._book_appointment(page)
 
     @staticmethod
     def _fill_text(page, placeholder: str, value: str) -> bool:
@@ -406,7 +406,7 @@ class VfsBot(ABC):
             return False
 
     @staticmethod
-    def _click_save(page) -> None:
+    def _click_save(page) -> bool:
         """Clicks the 'Save' button on the 'Your Details' step."""
         try:
             button = page.get_by_role("button", name="Save").filter(visible=True).first
@@ -416,9 +416,86 @@ class VfsBot(ABC):
             page.wait_for_timeout(3000)
             VfsBot._take_screenshot(page, "10_after_save")
             logging.info(f"Saved Your Details. URL: {page.url}")
+            return True
         except Exception as e:
             logging.warning(f"Save click failed: {e}")
             VfsBot._take_screenshot(page, "ERROR_save")
+            return False
+
+    # ------------------------------------------------------------------ #
+    # Step 3 — Book Appointment                                          #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _book_appointment(page) -> None:
+        """
+        Advances from the 'Add another applicant' screen to Step 3, then selects
+        the appointment type and a date (the configured `[booking] appointment_date`
+        or, if blank, the earliest available). Stops before choosing a time slot.
+        """
+        # Click Continue on the fee / add-applicant screen to reach Step 3.
+        try:
+            cont = page.get_by_role("button", name="Continue").filter(visible=True).first
+            cont.scroll_into_view_if_needed(timeout=10000)
+            cont.click(timeout=15000)
+            logging.info("Clicked Continue (towards Book Appointment)")
+            page.wait_for_timeout(3000)
+        except Exception as e:
+            logging.warning(f"Could not reach Book Appointment: {e}")
+            VfsBot._take_screenshot(page, "ERROR_to_book_appointment")
+            return
+
+        # Wait for the calendar (and at least one available day) to render.
+        try:
+            page.wait_for_selector("full-calendar", timeout=30000)
+            page.wait_for_selector("td.date-availiable", timeout=30000)
+        except Exception:
+            logging.warning("Book Appointment calendar / availability did not appear.")
+            VfsBot._take_screenshot(page, "11_book_appointment")
+            return
+
+        page.wait_for_timeout(1500)
+        VfsBot._take_screenshot(page, "11_book_appointment")
+
+        # Appointment type is usually pre-selected; select it defensively.
+        try:
+            page.get_by_role("radio", name="Choose a slot").first.check(timeout=5000)
+        except Exception:
+            logging.debug("Appointment type radio not found / already selected.")
+
+        VfsBot._pick_appointment_date(page)
+
+    @staticmethod
+    def _pick_appointment_date(page) -> None:
+        """Clicks an available calendar date (configured one, else the earliest)."""
+        preferred = get_config_value("booking", "appointment_date")
+        available = page.locator("td.date-availiable.fc-day-future")
+        try:
+            cell = available.first
+            if preferred:
+                wanted = page.locator(
+                    f"td.date-availiable[data-date='{preferred}']"
+                )
+                if wanted.count() > 0:
+                    cell = wanted.first
+                else:
+                    logging.warning(
+                        f"Preferred date {preferred} not available; using earliest."
+                    )
+
+            date_value = cell.get_attribute("data-date")
+            cell.scroll_into_view_if_needed(timeout=10000)
+            # Click the 'availiable' event marker, falling back to the day number.
+            target = cell.locator("a.fc-event")
+            if target.count() == 0:
+                target = cell.locator("a.fc-daygrid-day-number")
+            target.first.click(timeout=10000)
+            logging.info(f"Selected appointment date: {date_value}")
+            page.wait_for_timeout(2500)  # let the time slots load
+            VfsBot._take_screenshot(page, "12_date_selected")
+        except Exception as e:
+            logging.warning(f"Could not select an appointment date: {e}")
+            VfsBot._take_screenshot(page, "ERROR_date")
 
     @staticmethod
     def _take_screenshot(page, name: str):
