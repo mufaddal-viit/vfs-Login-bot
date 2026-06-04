@@ -353,7 +353,7 @@ class VfsBot(ABC):
         VfsBot._take_screenshot(page, "09_your_details_filled")
 
         if all_filled and VfsBot._click_save(page):
-            VfsBot._book_appointment(page)
+            VfsBot._proceed_to_booking(page)
 
     @staticmethod
     def _fill_text(page, placeholder: str, value: str) -> bool:
@@ -423,39 +423,105 @@ class VfsBot(ABC):
             return False
 
     # ------------------------------------------------------------------ #
-    # Step 3 — Book Appointment                                          #
+    # Summary + OTP (end of Step 2) → Step 3 (Book Appointment)          #
     # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _proceed_to_booking(page) -> None:
+        """
+        Drives the screens between Save and Step 3:
+        Summary → Continue → Generate/Verify OTP → Continue → calendar,
+        then books a date + time on Step 3.
+        """
+        # 1. 'Your Details Summary' screen → Continue (to the OTP step).
+        if not VfsBot._click_button(page, "Continue", "to OTP step"):
+            return
+        page.wait_for_timeout(3000)
+
+        # 2. OTP: generate, prompt the user, fill, verify.
+        if not VfsBot._handle_otp(page):
+            return
+
+        # 3. Continue after OTP → Step 3.
+        if not VfsBot._click_button(page, "Continue", "to Book Appointment"):
+            return
+        page.wait_for_timeout(3000)
+
+        # 4. Step 3 — pick a date and time, then Continue.
+        VfsBot._book_appointment(page)
+
+    @staticmethod
+    def _handle_otp(page) -> bool:
+        """
+        Clicks 'Generate OTP', then obtains the OTP from the `VFS_OTP` env var or
+        an interactive terminal prompt, fills it, and clicks 'Verify'.
+
+        The OTP is delivered to the user's email/phone, so it cannot be read
+        automatically — manual entry (or VFS_OTP) is required.
+        """
+        if not VfsBot._click_button(page, "Generate OTP", ""):
+            return False
+        page.wait_for_timeout(3000)
+
+        try:
+            otp_input = page.get_by_placeholder("OTP").first
+            otp_input.wait_for(state="visible", timeout=30000)
+        except Exception:
+            logging.warning("OTP input field did not appear.")
+            VfsBot._take_screenshot(page, "ERROR_otp_input")
+            return False
+        VfsBot._take_screenshot(page, "13_otp_sent")
+
+        otp = os.environ.get("VFS_OTP", "").strip()
+        if otp:
+            logging.info("Using OTP from VFS_OTP environment variable.")
+        else:
+            logging.info("OTP sent — waiting for you to enter it in the terminal.")
+            try:
+                otp = input(
+                    "\n>>> Enter the OTP you received (email/SMS), then press Enter: "
+                ).strip()
+            except EOFError:
+                otp = ""
+        if not otp:
+            logging.warning("No OTP provided; leaving the form for manual completion.")
+            return False
+
+        otp_input.click()
+        otp_input.fill(otp)
+        page.wait_for_timeout(800)
+
+        if not VfsBot._click_button(page, "Verify", ""):
+            return False
+        page.wait_for_timeout(3000)
+
+        try:
+            page.get_by_text("verified successfully", exact=False).first.wait_for(
+                timeout=15000
+            )
+            logging.info("OTP verified successfully")
+        except Exception:
+            logging.warning("Could not confirm OTP verification — check the screenshot.")
+        VfsBot._take_screenshot(page, "14_otp_verified")
+        return True
 
     @staticmethod
     def _book_appointment(page) -> None:
         """
-        Advances from the 'Add another applicant' screen to Step 3, then selects
-        the appointment type and a date (the configured `[booking] appointment_date`
-        or, if blank, the earliest available). Stops before choosing a time slot.
+        Step 3 'Book Appointment': selects the appointment type, a date (configured
+        `[booking] appointment_date` or earliest available), a time slot
+        (`appointment_time` or first available), then clicks Continue.
         """
-        # Click Continue on the fee / add-applicant screen to reach Step 3.
-        try:
-            cont = page.get_by_role("button", name="Continue").filter(visible=True).first
-            cont.scroll_into_view_if_needed(timeout=10000)
-            cont.click(timeout=15000)
-            logging.info("Clicked Continue (towards Book Appointment)")
-            page.wait_for_timeout(3000)
-        except Exception as e:
-            logging.warning(f"Could not reach Book Appointment: {e}")
-            VfsBot._take_screenshot(page, "ERROR_to_book_appointment")
-            return
-
-        # Wait for the calendar (and at least one available day) to render.
         try:
             page.wait_for_selector("full-calendar", timeout=30000)
             page.wait_for_selector("td.date-availiable", timeout=30000)
         except Exception:
             logging.warning("Book Appointment calendar / availability did not appear.")
-            VfsBot._take_screenshot(page, "11_book_appointment")
+            VfsBot._take_screenshot(page, "15_book_appointment")
             return
 
         page.wait_for_timeout(1500)
-        VfsBot._take_screenshot(page, "11_book_appointment")
+        VfsBot._take_screenshot(page, "15_book_appointment")
 
         # Appointment type is usually pre-selected; select it defensively.
         try:
@@ -463,19 +529,24 @@ class VfsBot(ABC):
         except Exception:
             logging.debug("Appointment type radio not found / already selected.")
 
-        VfsBot._pick_appointment_date(page)
+        if not VfsBot._pick_appointment_date(page):
+            return
+        if not VfsBot._pick_time_slot(page):
+            return
+
+        VfsBot._click_button(page, "Continue", "(Step 3 complete)")
+        page.wait_for_timeout(3000)
+        VfsBot._take_screenshot(page, "17_step3_complete")
 
     @staticmethod
-    def _pick_appointment_date(page) -> None:
+    def _pick_appointment_date(page) -> bool:
         """Clicks an available calendar date (configured one, else the earliest)."""
         preferred = get_config_value("booking", "appointment_date")
         available = page.locator("td.date-availiable.fc-day-future")
         try:
             cell = available.first
             if preferred:
-                wanted = page.locator(
-                    f"td.date-availiable[data-date='{preferred}']"
-                )
+                wanted = page.locator(f"td.date-availiable[data-date='{preferred}']")
                 if wanted.count() > 0:
                     cell = wanted.first
                 else:
@@ -492,10 +563,63 @@ class VfsBot(ABC):
             target.first.click(timeout=10000)
             logging.info(f"Selected appointment date: {date_value}")
             page.wait_for_timeout(2500)  # let the time slots load
-            VfsBot._take_screenshot(page, "12_date_selected")
+            VfsBot._take_screenshot(page, "16_date_selected")
+            return True
         except Exception as e:
             logging.warning(f"Could not select an appointment date: {e}")
             VfsBot._take_screenshot(page, "ERROR_date")
+            return False
+
+    @staticmethod
+    def _pick_time_slot(page) -> bool:
+        """Selects a time slot (configured `appointment_time` or the first one)."""
+        preferred = get_config_value("booking", "appointment_time")
+        try:
+            page.wait_for_selector("div.ba-slot-box", timeout=20000)
+        except Exception:
+            logging.warning("No time slots appeared after selecting the date.")
+            VfsBot._take_screenshot(page, "ERROR_timeslot")
+            return False
+
+        page.wait_for_timeout(1000)
+        try:
+            box = page.locator("div.ba-slot-box").first
+            if preferred:
+                row = page.locator("tr:has(div.ba-slot-box)").filter(has_text=preferred)
+                if row.count() > 0:
+                    box = row.locator("div.ba-slot-box").first
+                else:
+                    logging.warning(
+                        f"Time {preferred} not available; using the first slot."
+                    )
+
+            box.scroll_into_view_if_needed(timeout=10000)
+            # Clicking the label toggles its radio reliably.
+            label = box.locator("label.ba-slot-radio-label")
+            (label.first if label.count() > 0 else box).click(timeout=10000)
+            logging.info(f"Selected time slot: {preferred or 'first available'}")
+            page.wait_for_timeout(1000)
+            VfsBot._take_screenshot(page, "16b_time_selected")
+            return True
+        except Exception as e:
+            logging.warning(f"Could not select a time slot: {e}")
+            VfsBot._take_screenshot(page, "ERROR_timeslot")
+            return False
+
+    @staticmethod
+    def _click_button(page, name: str, context: str = "") -> bool:
+        """Clicks a visible button by its accessible name; logs and screenshots on failure."""
+        try:
+            button = page.get_by_role("button", name=name).filter(visible=True).first
+            button.scroll_into_view_if_needed(timeout=10000)
+            button.click(timeout=15000)
+            logging.info(f"Clicked {name} {context}".rstrip())
+            return True
+        except Exception as e:
+            logging.warning(f"Could not click '{name}' {context}: {e}".rstrip())
+            slug = name.lower().replace(" ", "_")
+            VfsBot._take_screenshot(page, f"ERROR_{slug}")
+            return False
 
     @staticmethod
     def _take_screenshot(page, name: str):
