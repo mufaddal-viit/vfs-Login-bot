@@ -472,19 +472,9 @@ class VfsBot(ABC):
             return False
         VfsBot._take_screenshot(page, "13_otp_sent")
 
-        otp = os.environ.get("VFS_OTP", "").strip()
-        if otp:
-            logging.info("Using OTP from VFS_OTP environment variable.")
-        else:
-            logging.info("OTP sent — waiting for you to enter it in the terminal.")
-            try:
-                otp = input(
-                    "\n>>> Enter the OTP you received (email/SMS), then press Enter: "
-                ).strip()
-            except EOFError:
-                otp = ""
+        otp = VfsBot._obtain_otp()
         if not otp:
-            logging.warning("No OTP provided; leaving the form for manual completion.")
+            logging.warning("Could not obtain an OTP; leaving the form for manual entry.")
             return False
 
         otp_input.click()
@@ -504,6 +494,47 @@ class VfsBot(ABC):
             logging.warning("Could not confirm OTP verification — check the screenshot.")
         VfsBot._take_screenshot(page, "14_otp_verified")
         return True
+
+    @staticmethod
+    def _obtain_otp() -> str:
+        """
+        Returns the OTP, trying in order:
+        1. the VFS_OTP environment variable (manual override),
+        2. automatic fetch via the selected OTP tool — 'imap' (otp_fetcher) or
+           'mailtm' (mailtm_otp) — chosen by the --otp-tool flag (VFS_OTP_TOOL)
+           or the [otp].provider config value,
+        3. an interactive terminal prompt (last resort).
+        """
+        otp = os.environ.get("VFS_OTP", "").strip()
+        if otp:
+            logging.info("Using OTP from VFS_OTP environment variable.")
+            return otp
+
+        tool = (
+            os.environ.get("VFS_OTP_TOOL")
+            or get_config_value("otp", "provider", "imap")
+            or "imap"
+        ).lower()
+        try:
+            if tool == "mailtm":
+                from mailtm_otp import fetch_otp_from_config
+            else:
+                from otp_fetcher import fetch_otp_from_config
+
+            logging.info(f"Fetching OTP automatically via '{tool}' tool...")
+            otp = (fetch_otp_from_config() or "").strip()
+            if otp:
+                logging.info(f"OTP fetched ({tool}): {otp}")
+                return otp
+        except Exception as e:
+            logging.warning(f"Automatic OTP fetch via '{tool}' failed: {e}")
+
+        try:
+            return input(
+                "\n>>> Enter the OTP you received, then press Enter: "
+            ).strip()
+        except EOFError:
+            return ""
 
     @staticmethod
     def _book_appointment(page) -> None:
@@ -556,10 +587,12 @@ class VfsBot(ABC):
 
             date_value = cell.get_attribute("data-date")
             cell.scroll_into_view_if_needed(timeout=10000)
-            # Click the 'availiable' event marker, falling back to the day number.
-            target = cell.locator("a.fc-event")
+            # Click the day-number link (always visible). The 'availiable' event
+            # marker has no clickable area, so we avoid it; clicking the day cell
+            # is what triggers FullCalendar's date selection.
+            target = cell.locator("a.fc-daygrid-day-number")
             if target.count() == 0:
-                target = cell.locator("a.fc-daygrid-day-number")
+                target = cell.locator(".fc-daygrid-day-frame")
             target.first.click(timeout=10000)
             logging.info(f"Selected appointment date: {date_value}")
             page.wait_for_timeout(2500)  # let the time slots load

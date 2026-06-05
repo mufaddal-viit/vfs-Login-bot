@@ -1,0 +1,23 @@
+2026-06-05 13:03:26,791 INFO    otp_fetcher: Logging to d:\WORK\vfs-Login-bot\otp_fetcher.log
+2026-06-05 13:03:26,792 INFO    otp_fetcher: Connecting to imap.gmail.com:993 as calcutta53.mufaddal@gmail.com
+2026-06-05 13:03:30,081 INFO    otp_fetcher: Login OK; selecting mailbox 'INBOX'
+2026-06-05 13:03:30,678 INFO    otp_fetcher: Polling for OTP (sender=None, subject~=None, pattern=\b(\d{4,8})\b, timeout=30.0s, since=60min)
+2026-06-05 13:03:32,684 INFO    otp_fetcher: Search matched 55 message(s); scanning newest first
+2026-06-05 13:03:33,878 DEBUG   otp_fetcher: Examining uid=b'21800' subject='one time password'
+2026-06-05 13:03:33,880 INFO    otp_fetcher: OTP found in uid=b'21800': 046189
+2026-06-05 13:03:33,881 INFO    otp_fetcher: RESULT — OTP: 046189
+2026-06-05 13:03:33,882 INFO    otp_fetcher: Closing connection
+2026-06-05 13:05:58,698 INFO    otp_fetcher: Logging to D:\WORK\vfs-Login-bot\otp_fetcher.log
+2026-06-05 13:05:58,699 INFO    otp_fetcher: Connecting to imap.gmail.com:993 as calcutta53.mufaddal@gmail.com
+2026-06-05 13:06:05,511 INFO    otp_fetcher: Login OK; selecting mailbox 'INBOX'
+2026-06-05 13:06:08,810 INFO    otp_fetcher: Polling for OTP (sender=None, subject~=None, pattern=\b(\d{4,8})\b, timeout=30.0s, since=60min)
+2026-06-05 13:06:10,029 INFO    otp_fetcher: Search matched 55 message(s); scanning newest first
+2026-06-05 13:06:13,112 DEBUG   otp_fetcher: Examining uid=b'21800' subject='one time password'
+2026-06-05 13:06:13,114 INFO    otp_fetcher: OTP found in uid=b'21800': 046189
+2026-06-05 13:06:13,115 INFO    otp_fetcher: RESULT — OTP: 046189
+2026-06-05 13:06:13,117 INFO    otp_fetcher: Closing connection
+2026-06-05 15:52:56,564 INFO    otp_fetcher: Logging to D:\WORK\vfs-Login-bot\otp_fetcher.log
+2026-06-05 15:52:56,608 INFO    otp_fetcher: Connecting to imap.gmail.com:993 as calcutta53.mufaddal@gmail.com
+2026-06-05 15:52:59,920 INFO    otp_fetcher: Login OK; selecting mailbox 'INBOX'
+2026-06-05 15:53:01,224 INFO    otp_fetcher: Polling for OTP (sender=None, subject~=None, pattern=\b(\d{4,8})\b, timeout=90.0s, since=5min)
+2026-06-05 15:53:02,467 INFO    otp_fetcher: Closing connection

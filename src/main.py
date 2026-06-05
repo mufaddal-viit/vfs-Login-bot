@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import sys
 
 from src.utils.config_reader import initialize_config
@@ -45,9 +46,21 @@ def main() -> None:
         required=True,
     )
 
+    parser.add_argument(
+        "-o",
+        "--otp-tool",
+        type=str,
+        choices=["imap", "mailtm"],
+        default=None,
+        help="OTP source: 'imap' (read your mailbox) or 'mailtm' (disposable inbox). "
+        "Overrides [otp].provider in config.",
+    )
+
     args = parser.parse_args()
     source_country_code = args.source_country_code
     destination_country_code = args.destination_country_code
+    if args.otp_tool:
+        os.environ["VFS_OTP_TOOL"] = args.otp_tool
     try:
         vfs_bot = get_vfs_bot(source_country_code, destination_country_code)
         vfs_bot.run()
