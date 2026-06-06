@@ -220,7 +220,8 @@ class VfsBot(ABC):
             )
             return
 
-        page.wait_for_timeout(2000)  # let the dropdown options load
+        VfsBot._wait_for_loader(page)  # the centre list loads behind a spinner
+        page.wait_for_timeout(1000)
 
         # (mat-select formcontrolname, configured value to pick). Order matters:
         # the centre must be chosen first as the later dropdowns cascade from it.
@@ -258,6 +259,20 @@ class VfsBot(ABC):
             logging.info("No earliest-slot message displayed on this step.")
 
     @staticmethod
+    def _wait_for_loader(page, timeout: int = 30000) -> None:
+        """
+        Waits for VFS's ngx-ui-loader overlay to clear. This full-screen spinner
+        intercepts pointer events, so clicking while it is up times out. Returns
+        immediately if no loader is present.
+        """
+        try:
+            page.locator("ngx-ui-loader .ngx-overlay.loading-foreground").wait_for(
+                state="hidden", timeout=timeout
+            )
+        except Exception:
+            pass  # loader absent or already cleared
+
+    @staticmethod
     def _select_mat_dropdown(page, control_name: str, value: str) -> bool:
         """
         Selects an option in an Angular Material dropdown (`mat-select`).
@@ -269,6 +284,7 @@ class VfsBot(ABC):
             bool: True if the option was selected, False otherwise.
         """
         try:
+            VfsBot._wait_for_loader(page)  # centre/category lists load behind a spinner
             trigger = page.locator(f"mat-select[formcontrolname='{control_name}']").first
             trigger.scroll_into_view_if_needed(timeout=10000)
             trigger.click(timeout=10000)
@@ -277,7 +293,8 @@ class VfsBot(ABC):
                 timeout=10000
             )
             logging.info(f"Selected '{value}' (dropdown: '{control_name}')")
-            page.wait_for_timeout(1500)  # let any dependent dropdown reload
+            page.wait_for_timeout(1000)
+            VfsBot._wait_for_loader(page)  # let the dependent dropdown reload
             return True
         except Exception as e:
             logging.warning(f"Could not select '{value}' for '{control_name}': {e}")
@@ -288,6 +305,7 @@ class VfsBot(ABC):
     def _click_continue(page) -> None:
         """Clicks the 'Continue' button to advance to the next booking step."""
         try:
+            VfsBot._wait_for_loader(page)
             page.wait_for_timeout(1000)
             button = (
                 page.get_by_role("button", name="Continue").filter(visible=True).first
@@ -544,6 +562,7 @@ class VfsBot(ABC):
         (`appointment_time` or first available), then clicks Continue.
         """
         try:
+            VfsBot._wait_for_loader(page)
             page.wait_for_selector("full-calendar", timeout=30000)
             page.wait_for_selector("td.date-availiable", timeout=30000)
         except Exception:
@@ -569,6 +588,54 @@ class VfsBot(ABC):
         page.wait_for_timeout(3000)
         VfsBot._take_screenshot(page, "17_step3_complete")
 
+        # Step 4 'Services' — skip the optional add-ons, just Continue.
+        VfsBot._click_button(page, "Continue", "(Step 4 Services)")
+        page.wait_for_timeout(3000)
+        VfsBot._take_screenshot(page, "18_services")
+
+        # Step 5 'Review' — accept the T&Cs, then Pay Online.
+        VfsBot._complete_review(page)
+
+    @staticmethod
+    def _complete_review(page) -> None:
+        """
+        Step 5 'Review': ticks the Terms & Conditions checkboxes, then clicks
+        'Pay Online' (which navigates to the payment gateway — payment itself is
+        left to the user, and the browser stays open).
+        """
+        VfsBot._wait_for_loader(page)
+        page.wait_for_timeout(1500)
+
+        # Both checkboxes share the same id, so target the native inputs by index.
+        checkboxes = page.locator("input.mdc-checkbox__native-control")
+        try:
+            count = checkboxes.count()
+        except Exception:
+            count = 0
+        if count == 0:
+            logging.warning("No review checkboxes found; stopping before payment.")
+            VfsBot._take_screenshot(page, "19_review")
+            return
+
+        accepted = 0
+        for i in range(count):
+            cb = checkboxes.nth(i)
+            try:
+                cb.scroll_into_view_if_needed(timeout=10000)
+                # The native input is hidden behind the styled mdc box, so force it.
+                cb.check(force=True, timeout=10000)
+                accepted += 1
+            except Exception as e:
+                logging.warning(f"Could not tick checkbox {i}: {e}")
+        logging.info(f"Accepted {accepted}/{count} review checkbox(es)")
+        VfsBot._take_screenshot(page, "19_review_accepted")
+
+        # 'Pay Online' enables only once the T&Cs are ticked.
+        if VfsBot._click_button(page, "Pay Online", "(Step 5 — to payment)"):
+            page.wait_for_timeout(4000)
+            VfsBot._take_screenshot(page, "20_pay_online")
+            logging.info(f"Reached payment gateway. URL: {page.url}")
+
     @staticmethod
     def _pick_appointment_date(page) -> bool:
         """Clicks an available calendar date (configured one, else the earliest)."""
@@ -586,6 +653,7 @@ class VfsBot(ABC):
                     )
 
             date_value = cell.get_attribute("data-date")
+            VfsBot._wait_for_loader(page)
             cell.scroll_into_view_if_needed(timeout=10000)
             # Click the day-number link (always visible). The 'availiable' event
             # marker has no clickable area, so we avoid it; clicking the day cell
@@ -608,6 +676,7 @@ class VfsBot(ABC):
         """Selects a time slot (configured `appointment_time` or the first one)."""
         preferred = get_config_value("booking", "appointment_time")
         try:
+            VfsBot._wait_for_loader(page)  # slots load behind a spinner
             page.wait_for_selector("div.ba-slot-box", timeout=20000)
         except Exception:
             logging.warning("No time slots appeared after selecting the date.")
@@ -627,9 +696,11 @@ class VfsBot(ABC):
                     )
 
             box.scroll_into_view_if_needed(timeout=10000)
-            # Clicking the label toggles its radio reliably.
-            label = box.locator("label.ba-slot-radio-label")
-            (label.first if label.count() > 0 else box).click(timeout=10000)
+            # The radio input overlaps the label and intercepts pointer events,
+            # so click the radio directly (force past the overlap) to select it.
+            radio = box.locator("input.ba-slot-radio")
+            target = radio.first if radio.count() > 0 else box
+            target.click(force=True, timeout=10000)
             logging.info(f"Selected time slot: {preferred or 'first available'}")
             page.wait_for_timeout(1000)
             VfsBot._take_screenshot(page, "16b_time_selected")
@@ -643,6 +714,7 @@ class VfsBot(ABC):
     def _click_button(page, name: str, context: str = "") -> bool:
         """Clicks a visible button by its accessible name; logs and screenshots on failure."""
         try:
+            VfsBot._wait_for_loader(page)
             button = page.get_by_role("button", name=name).filter(visible=True).first
             button.scroll_into_view_if_needed(timeout=10000)
             button.click(timeout=15000)
