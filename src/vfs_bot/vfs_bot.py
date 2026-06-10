@@ -151,7 +151,9 @@ class VfsBot(ABC):
 
         page.get_by_role("button", name="Sign In").click()
         logging.info("Clicked Sign In")
-        page.wait_for_timeout(4000)
+        # A Cloudflare captcha dialog often appears right after Sign In and blocks
+        # the redirect to the dashboard, so watch for it during this wait.
+        VfsBot._wait_with_captcha_check(page, 6000)
 
         try:
             page.wait_for_url("**/dashboard", timeout=60000)
@@ -264,13 +266,72 @@ class VfsBot(ABC):
         Waits for VFS's ngx-ui-loader overlay to clear. This full-screen spinner
         intercepts pointer events, so clicking while it is up times out. Returns
         immediately if no loader is present.
+
+        Also clears any Cloudflare 'Verify Captcha' dialog first — it can pop up
+        at any step and blocks the form until dismissed.
         """
+        VfsBot._dismiss_captcha(page)
         try:
             page.locator("ngx-ui-loader .ngx-overlay.loading-foreground").wait_for(
                 state="hidden", timeout=timeout
             )
         except Exception:
             pass  # loader absent or already cleared
+
+    @staticmethod
+    def _dismiss_captcha(page) -> None:
+        """
+        Dismisses the Cloudflare 'Verify Captcha' dialog (`app-cloudflare-dialog`)
+        if it is showing. The Turnstile widget auto-solves, so we just need to
+        click its 'Submit' button. This dialog appears randomly between steps and
+        otherwise blocks every subsequent action, so it is checked before each one.
+        Returns immediately (and silently) when no dialog is present.
+        """
+        try:
+            dialog = page.locator("app-cloudflare-dialog")
+            if dialog.count() == 0 or not dialog.first.is_visible():
+                return
+        except Exception:
+            return
+
+        VfsBot._do_dismiss_captcha(page)
+
+    @staticmethod
+    def _wait_with_captcha_check(page, total_ms: int, step_ms: int = 3000) -> None:
+        """
+        Sleeps for `total_ms`, checking for (and dismissing) the Cloudflare captcha
+        dialog every `step_ms`. Use for long idle waits where the dialog could pop
+        up while the bot is otherwise doing nothing.
+        """
+        elapsed = 0
+        while elapsed < total_ms:
+            page.wait_for_timeout(min(step_ms, total_ms - elapsed))
+            elapsed += step_ms
+            VfsBot._dismiss_captcha(page)
+
+    @staticmethod
+    def _do_dismiss_captcha(page) -> None:
+        """Clicks 'Submit' on a confirmed-visible Cloudflare captcha dialog."""
+        dialog = page.locator("app-cloudflare-dialog")
+        logging.info("Cloudflare 'Verify Captcha' dialog detected — handling it.")
+        # The Turnstile token is usually populated within a couple of seconds.
+        page.wait_for_timeout(3000)
+        try:
+            submit = dialog.get_by_role("button", name="Submit").first
+            submit.click(timeout=10000)
+            logging.info("Clicked captcha 'Submit'")
+            page.wait_for_timeout(2500)
+            # Wait for the dialog to actually go away before continuing.
+            try:
+                dialog.first.wait_for(state="hidden", timeout=15000)
+            except Exception:
+                logging.warning(
+                    "Captcha dialog still visible after Submit — it may need a manual solve."
+                )
+            VfsBot._take_screenshot(page, "captcha_handled")
+        except Exception as e:
+            logging.warning(f"Could not click captcha 'Submit': {e}")
+            VfsBot._take_screenshot(page, "ERROR_captcha")
 
     @staticmethod
     def _select_mat_dropdown(page, control_name: str, value: str) -> bool:
@@ -388,6 +449,55 @@ class VfsBot(ABC):
         except Exception as e:
             logging.warning(f"Could not fill '{placeholder}': {e}")
             VfsBot._take_screenshot(page, "ERROR_input")
+            return False
+
+    @staticmethod
+    def _fill_input(page, selector: str, value: str, label: str = "") -> bool:
+        """Types `value` into the input matched by a CSS `selector` (e.g. an id)."""
+        label = label or selector
+        try:
+            field = page.locator(selector).first
+            field.scroll_into_view_if_needed(timeout=10000)
+            field.click()
+            field.fill("")  # clear any pre-filled value
+            field.press_sequentially(value, delay=100)
+            logging.info(f"Filled '{label}'")
+            page.wait_for_timeout(500)
+            return True
+        except Exception as e:
+            logging.warning(f"Could not fill '{label}': {e}")
+            VfsBot._take_screenshot(page, "ERROR_input")
+            return False
+
+    @staticmethod
+    def _fill_date(page, selector: str, value: str, label: str = "") -> bool:
+        """
+        Fills an ngb-datepicker text input (e.g. `#dateOfBirth`) with a date.
+
+        `value` is given as DD/MM/YYYY. The widget has its own input mask that
+        auto-inserts the '/' separators as you type, so we type DIGITS ONLY
+        (e.g. "02061995") and let the mask render "02/06/1995" — typing the
+        slashes ourselves produces a corrupted value like "02//0/6/1995".
+        The datepicker popup is then dismissed (Escape) so it doesn't overlay
+        later fields.
+        """
+        label = label or selector
+        digits = re.sub(r"\D", "", value)  # keep only 0-9; the mask adds the slashes
+        try:
+            field = page.locator(selector).first
+            field.scroll_into_view_if_needed(timeout=10000)
+            field.click()
+            field.fill("")
+            field.press_sequentially(digits, delay=120)
+            page.wait_for_timeout(400)
+            # Close the calendar popup so it doesn't block the next field.
+            page.keyboard.press("Escape")
+            logging.info(f"Filled date '{label}' = {value}")
+            page.wait_for_timeout(400)
+            return True
+        except Exception as e:
+            logging.warning(f"Could not fill date '{label}': {e}")
+            VfsBot._take_screenshot(page, "ERROR_date_input")
             return False
 
     @staticmethod
@@ -555,12 +665,18 @@ class VfsBot(ABC):
             return ""
 
     @staticmethod
-    def _book_appointment(page) -> None:
+    def _book_appointment(page, post_steps=None) -> None:
         """
         Step 3 'Book Appointment': selects the appointment type, a date (configured
         `[booking] appointment_date` or earliest available), a time slot
         (`appointment_time` or first available), then clicks Continue.
+
+        `post_steps` is the callable run after Step 3 (Services/insurance/Review);
+        it defaults to the base `_post_appointment_steps` but subclasses pass their
+        own so the static-method calls below dispatch to the right portal flow.
         """
+        if post_steps is None:
+            post_steps = VfsBot._post_appointment_steps
         try:
             VfsBot._wait_for_loader(page)
             page.wait_for_selector("full-calendar", timeout=30000)
@@ -588,6 +704,17 @@ class VfsBot(ABC):
         page.wait_for_timeout(3000)
         VfsBot._take_screenshot(page, "17_step3_complete")
 
+        # Everything after Step 3 (Services, optional insurance, Review) is portal
+        # specific, so it lives in an overridable hook.
+        post_steps(page)
+
+    @staticmethod
+    def _post_appointment_steps(page) -> None:
+        """
+        Steps after Step 3 'Book Appointment'. Base flow: Step 4 'Services'
+        (skip add-ons) → Step 5 'Review'. Portals with extra steps (e.g. the
+        Luxembourg travel-insurance step) override this.
+        """
         # Step 4 'Services' — skip the optional add-ons, just Continue.
         VfsBot._click_button(page, "Continue", "(Step 4 Services)")
         page.wait_for_timeout(3000)

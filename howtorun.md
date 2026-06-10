@@ -1,7 +1,7 @@
 # How to Run — VFS Login Bot
 
-Step-by-step instructions to run the bot locally. Example uses **India → Luxembourg**
-(`-sc IN -dc LU`); swap the codes for any supported pair (see the table at the bottom).
+Step-by-step instructions to run the bot locally. Example uses **UAE → Luxembourg**
+(`-sc AE -dc LU`); swap the codes for any supported pair (see the table at the bottom).
 
 The bot attaches to a **real Chrome** you launch yourself (this is how it gets past
 Cloudflare). So you always need **two terminals**: one running Chrome, one running the bot.
@@ -25,7 +25,7 @@ pip install -e .
 ## Step 1 — Put your credentials in the config
 
 Edit [config/config.ini](config/config.ini) with a VFS account **registered on the portal
-you're targeting** (e.g. the India→Luxembourg portal):
+you're targeting** (e.g. the UAE→Luxembourg portal):
 
 ```ini
 [browser]
@@ -40,6 +40,26 @@ password = YourRealPassword
 
 > If the email isn't registered on that specific portal, login will fail with
 > *"The entered email id is not registered with us."*
+
+### Step 2 ("Your Details") fields — Luxembourg portal
+
+The UAE → Luxembourg portal asks for more applicant details than the other portals.
+Fill these in the `[applicant]` section of [config/config.ini](config/config.ini)
+(any field left blank is skipped):
+
+```ini
+[applicant]
+first_name = mufaddal
+last_name = calcutta
+nationality = india
+passport_number = 9s9s923j0
+gender = Male                 ; must match the dropdown text (Male / Female)
+date_of_birth = 02/06/1995    ; DD/MM/YYYY
+passport_expiry_date = 02/06/2030  ; DD/MM/YYYY
+country_code = 971            ; dialling code, no '+'
+contact_number = 501234567
+email =                       ; blank -> reuses the [vfs-credential] login email
+```
 
 ---
 
@@ -78,7 +98,7 @@ curl -s http://localhost:9222/json/version
 ```bash
 cd /d/WORK/vfs-Login-bot
 source venv/Scripts/activate
-python -m src.main -sc IN -dc LU
+python -m src.main -sc AE -dc LU
 ```
 
 **PowerShell:**
@@ -86,10 +106,10 @@ python -m src.main -sc IN -dc LU
 ```powershell
 cd d:\WORK\vfs-Login-bot
 .\venv\Scripts\Activate.ps1
-python -m src.main -sc IN -dc LU
+python -m src.main -sc AE -dc LU
 ```
 
-> The installed console script also works the same way: `vfs-login-bot -sc IN -dc LU`
+> The installed console script also works the same way: `vfs-login-bot -sc AE -dc LU`
 
 ⚠️ Country codes are **case-sensitive** — use uppercase (`-dc LU`, not `-dc lu`).
 
@@ -98,9 +118,12 @@ python -m src.main -sc IN -dc LU
 ## Step 4 — Check the result
 
 - Live logs print in Terminal 2 and append to `app.log`.
-- Step-by-step screenshots land in [screenshots/](screenshots/):
-  `01_pre_login_done` → `02_before_sign_in` → `03_after_sign_in` →
-  `04_dashboard` → `05_after_sign_out`.
+- Step-by-step screenshots land in [screenshots/](screenshots/), numbered in flow order:
+  `06_start_new_booking` → `07_appointment_details` → `08_after_continue` →
+  `09_your_details_filled` → `10_after_save` → `13_otp_sent` → `14_otp_verified` →
+  `15_book_appointment` → `16_date_selected` → `16b_time_selected` →
+  `17_step3_complete` → `18_services` → `19_review_accepted` → `20_pay_online`.
+  Any step that fails also drops an `ERROR_*` screenshot.
 
 ---
 
@@ -136,9 +159,12 @@ Get-CimInstance Win32_Process -Filter "name='chrome.exe'" |
 | `-sc AZ -dc IT`    | Azerbaijan   | Italy       | `visa.vfsglobal.com/aze/en/ita/login` |
 | `-sc AE -dc MT`    | UAE          | Malta       | `visa.vfsglobal.com/are/en/mlt/login` |
 | `-sc IN -dc LU`    | India        | Luxembourg  | `visa.vfsglobal.com/ind/en/lux/login` |
+| `-sc AE -dc LU`    | UAE          | Luxembourg  | `visa.vfsglobal.com/are/en/lux/login` |
 
-To add a new pair: add the URL to [config/vfs_urls.ini](config/vfs_urls.ini), create a
-`VfsBot<XX>` class in `src/vfs_bot/`, and register it in
+To add a new pair: add the URL to [config/vfs_urls.ini](config/vfs_urls.ini) keyed
+`SRC-DST` (e.g. `AE-LU`). If the **destination** is already supported (DE, IT, MT, LU),
+that's all you need — any source country works. For a brand-new destination, also create a
+`VfsBot<XX>` class in `src/vfs_bot/` and register it in
 [src/vfs_bot/vfs_bot_factory.py](src/vfs_bot/vfs_bot_factory.py).
 
 ---
