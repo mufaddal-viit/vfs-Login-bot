@@ -1,0 +1,24 @@
+{
+  "description": "Default VFS flow (Germany / Italy / Malta and any route without its own file). Login -> Appointment Details -> Your Details -> OTP -> Book Appointment -> Services -> Review.",
+  "otp": true,
+  "steps": [
+    {
+      "name": "appointment-details",
+      "fields": [
+        { "type": "mat-dropdown", "control": "centerCode",            "config": "booking.application_centre" },
+        { "type": "mat-dropdown", "control": "selectedSubvisaCategory", "config": "booking.appointment_category" },
+        { "type": "mat-dropdown", "control": "visaCategoryCode",       "config": "booking.sub_category" }
+      ]
+    },
+    {
+      "name": "your-details",
+      "countdown_ms": 33000,
+      "fields": [
+        { "type": "text",           "placeholder": "Enter your first name",  "config": "applicant.first_name" },
+        { "type": "text",           "placeholder": "Please enter last name.", "config": "applicant.last_name" },
+        { "type": "label-dropdown", "label": "Current Nationality",          "config": "applicant.nationality" },
+        { "type": "text",           "placeholder": "Enter passport number",  "config": "applicant.passport_number" }
+      ]
+    }
+  ]
+}

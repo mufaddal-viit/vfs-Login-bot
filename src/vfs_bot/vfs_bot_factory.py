@@ -2,46 +2,34 @@ from src.vfs_bot.vfs_bot import VfsBot
 
 
 class UnsupportedCountryError(Exception):
-    """Raised when an unsupported country code is provided."""
+    """Raised when a route has no configured URL."""
+
+
+class _SchemaVfsBot(VfsBot):
+    """
+    Concrete VfsBot driven entirely by the route's JSON schema
+    (config/routes/<SOURCE>-<DEST>.json, falling back to _default.json).
+
+    There is no longer a Python subclass per destination country — the per-portal
+    differences (which Step-2 fields to fill, whether OTP runs, whether a travel-
+    insurance step exists) all come from the schema. Add a new portal by dropping
+    in a JSON file and a URL in config/vfs_urls.ini; no code change required.
+    """
+
+    def __init__(self, source_country_code: str, destination_country_code: str):
+        super().__init__()
+        self.source_country_code = source_country_code
+        self.destination_country_code = destination_country_code
 
 
 def get_vfs_bot(source_country_code: str, destination_country_code: str) -> VfsBot:
-    """Retrieves the appropriate VfsBot class for a given country.
-
-    This function searches for a matching subclass of `VfsBot` based on the
-    provided destination country code (ISO 3166-1 alpha-2).
-    If no matching class is found, an `UnsupportedCountryError` exception is raised.
+    """Returns a schema-driven VfsBot for the given source/destination route.
 
     Args:
-        source_country_code (str): The ISO 3166-1 alpha-2 country code where you're applying from.
-        destination_country_code (str): The ISO 3166-1 alpha-2 country code where the appointment is needed.
+        source_country_code (str): ISO 3166-1 alpha-2 code you're applying from.
+        destination_country_code (str): ISO 3166-1 alpha-2 code of the destination.
 
     Returns:
-        VfsBot: An instance of the `VfsBot` subclass specific to the provided country.
-
-    Raises:
-        UnsupportedCountryError: If the provided country is not supported.
+        VfsBot: A bot whose flow is driven by the route's JSON schema.
     """
-
-    country_lower = destination_country_code
-
-    if country_lower == "DE":
-        from .vfs_bot_de import VfsBotDe
-
-        return VfsBotDe(source_country_code)
-    elif country_lower == "IT":
-        from .vfs_bot_it import VfsBotIt
-
-        return VfsBotIt(source_country_code)
-    elif country_lower == "MT":
-        from .vfs_bot_mt import VfsBotMt
-
-        return VfsBotMt(source_country_code)
-    elif country_lower == "LU":
-        from .vfs_bot_lu import VfsBotLu
-
-        return VfsBotLu(source_country_code)
-    else:
-        raise UnsupportedCountryError(
-            f"Country {destination_country_code} is not supported"
-        )
+    return _SchemaVfsBot(source_country_code, destination_country_code)

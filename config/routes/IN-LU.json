@@ -1,0 +1,4 @@
+{
+  "description": "India -> Luxembourg. Same flow as UAE -> Luxembourg (extends AE-LU): extra Step-2 fields, no OTP, Travel Insurance step. Adjust here if the IN portal diverges (e.g. set \"otp\": true).",
+  "extends": "AE-LU"
+}

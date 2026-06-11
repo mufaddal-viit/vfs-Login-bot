@@ -8,6 +8,7 @@ from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
 
 from src.utils.config_reader import get_config_value
+from src.utils.route_schema import get_route_schema
 
 SCREENSHOT_DIR = "screenshots"
 
@@ -36,6 +37,7 @@ class VfsBot(ABC):
     def __init__(self):
         self.source_country_code = None
         self.destination_country_code = None
+        self.schema = {}
 
     def run(self) -> bool:
         """
@@ -47,6 +49,12 @@ class VfsBot(ABC):
         """
         logging.info(
             f"Starting VFS Bot for {self.source_country_code.upper()}-{self.destination_country_code.upper()}"
+        )
+
+        # Load the per-route flow schema (which fields each step fills and which
+        # optional steps run). Falls back to config/routes/_default.json.
+        self.schema = get_route_schema(
+            self.source_country_code, self.destination_country_code
         )
 
         browser_type = get_config_value("browser", "type", "firefox")
@@ -196,19 +204,18 @@ class VfsBot(ABC):
             logging.warning(f"Start New Booking failed: {e}")
             VfsBot._take_screenshot(page, "ERROR_start_new_booking")
 
-    @staticmethod
-    def _fill_appointment_details(page) -> None:
+    def _fill_appointment_details(self, page) -> None:
         """
-        Fills the 'Appointment Details' step (Application Centre, appointment
-        category, sub-category) using values from the `[booking]` config section.
+        Fills the 'Appointment Details' step using the route schema's
+        `appointment-details` step `fields` (typically Application Centre,
+        category, sub-category — cascading mat-dropdowns whose order matters).
 
-        If none are configured, the bot stops right after Start New Booking.
+        If no fields resolve to a value, the bot stops after Start New Booking.
         """
-        centre = get_config_value("booking", "application_centre")
-        category = get_config_value("booking", "appointment_category")
-        sub_category = get_config_value("booking", "sub_category")
+        step = self._step("appointment-details")
+        fields = step.get("fields", [])
 
-        if not any([centre, category, sub_category]):
+        if not any(VfsBot._resolve_value(f) for f in fields):
             logging.info(
                 "No [booking] details in config — stopping after Start New Booking."
             )
@@ -225,21 +232,19 @@ class VfsBot(ABC):
         VfsBot._wait_for_loader(page)  # the centre list loads behind a spinner
         page.wait_for_timeout(1000)
 
-        # (mat-select formcontrolname, configured value to pick). Order matters:
-        # the centre must be chosen first as the later dropdowns cascade from it.
-        fields = [
-            ("centerCode", centre),
-            ("selectedSubvisaCategory", category),
-            ("visaCategoryCode", sub_category),
-        ]
+        # These dropdowns cascade (centre first, then category, then sub-category),
+        # so on the first failure we stop — a later dropdown depends on the prior
+        # one having populated. `_fill_fields` skips blanks but doesn't short-
+        # circuit, so drive them here to preserve the dependency ordering.
         all_selected = True
-        for control_name, value in fields:
+        for field in fields:
+            value = VfsBot._resolve_value(field)
             if not value:
-                all_selected = False  # an unconfigured field leaves the form incomplete
-                continue
-            if not VfsBot._select_mat_dropdown(page, control_name, value):
                 all_selected = False
-                break  # a later dropdown depends on the previous one
+                continue
+            if not VfsBot._select_mat_dropdown(page, field["control"], value):
+                all_selected = False
+                break
 
         VfsBot._take_screenshot(page, "07_appointment_details")
 
@@ -311,27 +316,77 @@ class VfsBot(ABC):
 
     @staticmethod
     def _do_dismiss_captcha(page) -> None:
-        """Clicks 'Submit' on a confirmed-visible Cloudflare captcha dialog."""
+        """
+        Clears a confirmed-visible Cloudflare captcha dialog.
+
+        The Turnstile widget shows 'Verifying...' for a few seconds and only
+        populates its hidden `cf-turnstile-response` token once solved — clicking
+        Submit before then does nothing. So we wait for that token to appear,
+        then click Submit, and retry the whole cycle a few times if the dialog
+        is still up (it can require more than one round).
+        """
         dialog = page.locator("app-cloudflare-dialog")
         logging.info("Cloudflare 'Verify Captcha' dialog detected — handling it.")
-        # The Turnstile token is usually populated within a couple of seconds.
-        page.wait_for_timeout(3000)
-        try:
-            submit = dialog.get_by_role("button", name="Submit").first
-            submit.click(timeout=10000)
-            logging.info("Clicked captcha 'Submit'")
-            page.wait_for_timeout(2500)
-            # Wait for the dialog to actually go away before continuing.
+
+        for attempt in range(1, 4):  # up to 3 Submit cycles
+            VfsBot._wait_for_turnstile_token(page)
             try:
-                dialog.first.wait_for(state="hidden", timeout=15000)
+                submit = dialog.get_by_role("button", name="Submit").first
+                submit.click(timeout=10000)
+                logging.info(f"Clicked captcha 'Submit' (attempt {attempt})")
+            except Exception as e:
+                logging.warning(f"Could not click captcha 'Submit': {e}")
+                VfsBot._take_screenshot(page, "ERROR_captcha")
+                return
+
+            # Did the dialog go away?
+            try:
+                dialog.first.wait_for(state="hidden", timeout=12000)
+                logging.info("Captcha dialog cleared.")
+                VfsBot._take_screenshot(page, "captcha_handled")
+                return
             except Exception:
-                logging.warning(
-                    "Captcha dialog still visible after Submit — it may need a manual solve."
+                # Still visible (e.g. token wasn't ready yet) — loop and retry.
+                if not VfsBot._captcha_visible(page):
+                    return  # raced away on its own
+                logging.info(
+                    f"Captcha still visible after Submit (attempt {attempt}); retrying..."
                 )
-            VfsBot._take_screenshot(page, "captcha_handled")
-        except Exception as e:
-            logging.warning(f"Could not click captcha 'Submit': {e}")
-            VfsBot._take_screenshot(page, "ERROR_captcha")
+
+        logging.warning(
+            "Captcha dialog still visible after retries — it may need a manual solve."
+        )
+        VfsBot._take_screenshot(page, "ERROR_captcha_persist")
+
+    @staticmethod
+    def _captcha_visible(page) -> bool:
+        """True if the Cloudflare captcha dialog is currently showing."""
+        try:
+            dialog = page.locator("app-cloudflare-dialog")
+            return dialog.count() > 0 and dialog.first.is_visible()
+        except Exception:
+            return False
+
+    @staticmethod
+    def _wait_for_turnstile_token(page, timeout_ms: int = 15000) -> None:
+        """
+        Waits until the Turnstile hidden input (`cf-turnstile-response`) holds a
+        non-empty token, meaning the challenge auto-solved. Falls back to a short
+        fixed wait if the input can't be read (it lives in a closed shadow root on
+        some pages, so its value isn't always queryable).
+        """
+        try:
+            page.wait_for_function(
+                """() => {
+                    const el = document.querySelector('input[name="cf-turnstile-response"]');
+                    return el && el.value && el.value.length > 0;
+                }""",
+                timeout=timeout_ms,
+            )
+            logging.debug("Turnstile token populated.")
+        except Exception:
+            # Token not observable (closed shadow DOM) — give it a moment anyway.
+            page.wait_for_timeout(3000)
 
     @staticmethod
     def _select_mat_dropdown(page, control_name: str, value: str) -> bool:
@@ -385,21 +440,28 @@ class VfsBot(ABC):
     # Step 2 — Your Details                                              #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _fill_your_details(page) -> None:
-        """
-        Fills the Step 2 'Your Details' form (Applicant 1) using values from the
-        `[applicant]` config section, then waits the VFS-mandated 30 seconds and
-        clicks Save. Contact number and email are pre-filled by VFS and skipped.
+    def _step(self, name: str) -> dict:
+        """Returns the schema step dict with the given `name`, or {} if absent."""
+        for step in self.schema.get("steps", []):
+            if step.get("name") == name:
+                return step
+        return {}
 
-        If no applicant details are configured, the bot stops after Step 1.
+    def _fill_your_details(self, page) -> None:
         """
-        first_name = get_config_value("applicant", "first_name")
-        last_name = get_config_value("applicant", "last_name")
-        nationality = get_config_value("applicant", "nationality")
-        passport_number = get_config_value("applicant", "passport_number")
+        Fills the Step 2 'Your Details' form (Applicant 1) from the route schema's
+        `your-details` step `fields`, then waits the VFS-mandated countdown and
+        clicks Save. The exact field set is data-driven per portal — see
+        config/routes/<ROUTE>.json — so portals that ask for extra fields (gender,
+        DOB, passport expiry, contact, email) need only list them there.
 
-        if not any([first_name, last_name, nationality, passport_number]):
+        If no fields resolve to a value, the bot stops after Step 1.
+        """
+        step = self._step("your-details")
+        fields = step.get("fields", [])
+
+        # Nothing to fill (e.g. all config values blank) → stop after Step 1.
+        if not any(VfsBot._resolve_value(f) for f in fields):
             logging.info("No [applicant] details in config — stopping after Step 1.")
             return
 
@@ -409,30 +471,23 @@ class VfsBot(ABC):
             logging.warning("Did not reach the 'Your Details' page; skipping Step 2.")
             return
 
-        # VFS starts a ~30s countdown on arrival and blocks Save until it ends.
-        # Obey it (with a small buffer) before touching the form.
-        logging.info("On 'Your Details' — waiting 33s as required by VFS before saving...")
-        page.wait_for_timeout(33000)
+        # VFS starts a countdown on arrival and blocks Save until it ends. The
+        # Cloudflare captcha often pops up during this idle wait, so check for it
+        # periodically rather than sleeping blind.
+        wait_ms = step.get("countdown_ms", 33000)
+        logging.info(
+            f"On 'Your Details' — waiting {wait_ms // 1000}s as required by VFS before saving..."
+        )
+        VfsBot._wait_with_captcha_check(page, wait_ms)
         page.wait_for_timeout(2000)  # let the form settle
+        VfsBot._dismiss_captcha(page)
 
-        all_filled = True
-        if first_name:
-            all_filled &= VfsBot._fill_text(page, "Enter your first name", first_name)
-        if last_name:
-            all_filled &= VfsBot._fill_text(page, "Please enter last name.", last_name)
-        if nationality:
-            all_filled &= VfsBot._select_dropdown_by_label(
-                page, "Current Nationality", nationality
-            )
-        if passport_number:
-            all_filled &= VfsBot._fill_text(
-                page, "Enter passport number", passport_number
-            )
+        all_filled = VfsBot._fill_fields(page, fields)
 
         VfsBot._take_screenshot(page, "09_your_details_filled")
 
         if all_filled and VfsBot._click_save(page):
-            VfsBot._proceed_to_booking(page)
+            self._proceed_to_booking(page)
 
     @staticmethod
     def _fill_text(page, placeholder: str, value: str) -> bool:
@@ -533,6 +588,139 @@ class VfsBot(ABC):
                 pass
             return False
 
+    # ------------------------------------------------------------------ #
+    # Schema-driven field engine                                          #
+    # ------------------------------------------------------------------ #
+    #
+    # A "field" is one entry from a route's JSON schema describing a single
+    # control to fill. Supported shapes (see config/routes/*.json):
+    #
+    #   {"type": "text",  "placeholder": "...",            "config": "applicant.first_name"}
+    #   {"type": "text",  "selector": "input[...]",        "config": "insurance.city", "label": "City"}
+    #   {"type": "date",  "selector": "#dateOfBirth",      "config": "applicant.date_of_birth", "label": "DOB"}
+    #   {"type": "mat-dropdown",   "control": "centerCode", "config": "booking.application_centre"}
+    #   {"type": "label-dropdown", "label": "Gender",       "config": "applicant.gender"}
+    #   {"type": "radio",          "name": "Worldwide",     "config": "insurance.coverage_type", "skip_if": "schengen"}
+    #
+    # `config` is a "section.key" pointer into the INI config. A field whose
+    # resolved value is blank is skipped. `_fill_fields` returns True only if
+    # every non-skipped field was filled successfully.
+
+    @staticmethod
+    def _resolve_value(field: dict) -> str:
+        """
+        Resolves a field's value: a literal `value`, else the INI `config`
+        pointer ("section.key"), with an optional `fallback` pointer used when
+        the primary one is blank (e.g. reuse the login email for the applicant).
+        """
+        if field.get("value") is not None:
+            return str(field["value"])
+        pointer = field.get("config")
+        value = ""
+        if pointer and "." in pointer:
+            section, key = pointer.split(".", 1)
+            value = get_config_value(section, key) or ""
+        if not value and field.get("fallback") and "." in field["fallback"]:
+            section, key = field["fallback"].split(".", 1)
+            value = get_config_value(section, key) or ""
+        return value
+
+    @staticmethod
+    def _fill_fields(page, fields: list) -> bool:
+        """
+        Fills a list of schema-described fields in order by dispatching each to
+        the matching helper. Blank-valued fields are skipped. Returns True only
+        if every field that had a value was filled successfully.
+        """
+        all_filled = True
+        for field in fields or []:
+            value = VfsBot._resolve_value(field)
+            if not value:
+                continue
+
+            ftype = field.get("type", "text")
+            label = field.get("label", "")
+
+            if ftype == "text":
+                if field.get("placeholder"):
+                    ok = VfsBot._fill_text(page, field["placeholder"], value)
+                else:
+                    ok = VfsBot._fill_input(
+                        page, field["selector"], value, label
+                    )
+            elif ftype == "date":
+                ok = VfsBot._fill_date(page, field["selector"], value, label)
+            elif ftype == "mat-dropdown":
+                ok = VfsBot._select_mat_dropdown(page, field["control"], value)
+            elif ftype == "label-dropdown":
+                ok = VfsBot._select_dropdown_by_label(page, field["label"], value)
+            elif ftype == "radio":
+                ok = VfsBot._check_radio(page, field, value)
+            elif ftype == "checkbox":
+                ok = VfsBot._check_checkbox(page, field)
+            else:
+                logging.warning(f"Unknown field type '{ftype}' — skipping.")
+                ok = True  # don't fail the form over a schema typo
+                continue
+
+            all_filled &= ok
+        return all_filled
+
+    @staticmethod
+    def _check_radio(page, field: dict, value: str) -> bool:
+        """
+        Checks a radio option. `field['name']` (defaults to the value) is the
+        accessible name. `skip_if` lets a config value that equals the
+        pre-selected default leave the radio untouched (e.g. 'Schengen').
+        """
+        skip_if = field.get("skip_if")
+        if skip_if and value.strip().lower() == skip_if.strip().lower():
+            return True
+        name = field.get("name", value)
+        try:
+            page.get_by_role("radio", name=name, exact=False).first.check(timeout=5000)
+            logging.info(f"Selected radio '{name}'")
+            return True
+        except Exception as e:
+            logging.warning(f"Could not select radio '{name}': {e}")
+            return False
+
+    @staticmethod
+    def _check_checkbox(page, field: dict) -> bool:
+        """
+        Ticks a Material checkbox (`mdc-checkbox`). The native <input> sits behind
+        the styled box, so the check is forced. Located by, in order of
+        preference: a CSS `selector`, the input's `value` attribute, or the
+        accessible `label` text. `skip_if_checked` (default True) leaves an
+        already-ticked box alone.
+        """
+        label = field.get("label", "checkbox")
+        if field.get("selector"):
+            cb = page.locator(field["selector"]).first
+        elif field.get("value_attr"):
+            cb = page.locator(
+                f"input[type='checkbox'][value='{field['value_attr']}']"
+            ).first
+        elif field.get("label"):
+            cb = page.get_by_role("checkbox", name=field["label"], exact=False).first
+        else:
+            logging.warning("Checkbox field has no selector/value_attr/label — skipping.")
+            return False
+
+        try:
+            cb.scroll_into_view_if_needed(timeout=10000)
+            if field.get("skip_if_checked", True) and cb.is_checked():
+                logging.info(f"Checkbox '{label}' already ticked.")
+                return True
+            # The native input is hidden behind the styled mdc box, so force it.
+            cb.check(force=True, timeout=10000)
+            logging.info(f"Ticked checkbox '{label}'")
+            return True
+        except Exception as e:
+            logging.warning(f"Could not tick checkbox '{label}': {e}")
+            VfsBot._take_screenshot(page, "ERROR_checkbox")
+            return False
+
     @staticmethod
     def _click_save(page) -> bool:
         """Clicks the 'Save' button on the 'Your Details' step."""
@@ -554,29 +742,94 @@ class VfsBot(ABC):
     # Summary + OTP (end of Step 2) → Step 3 (Book Appointment)          #
     # ------------------------------------------------------------------ #
 
+    def _proceed_to_booking(self, page) -> None:
+        """
+        Drives the screens between Save and Step 3. The route schema's `otp` flag
+        decides whether the OTP step runs: portals with OTP go
+        Summary → Continue → Generate/Verify OTP → Continue → calendar; portals
+        without it (e.g. UAE→Luxembourg) go Summary → Continue → calendar.
+        """
+        otp_enabled = self.schema.get("otp", True)
+
+        if otp_enabled:
+            # 'Your Details Summary' → Continue (to the OTP step).
+            if not VfsBot._click_button(page, "Continue", "to OTP step"):
+                return
+            page.wait_for_timeout(3000)
+
+            # OTP: generate, obtain, fill, verify.
+            if not VfsBot._handle_otp(page):
+                return
+
+            # Continue after OTP → Step 3.
+            if not VfsBot._click_button(page, "Continue", "to Book Appointment"):
+                return
+            page.wait_for_timeout(3000)
+        else:
+            # No OTP step: Summary → Continue → straight to the calendar. A
+            # Cloudflare captcha can pop up here and silently swallow the click,
+            # leaving us stuck on Your Details, so retry Continue (dismissing the
+            # captcha each round) until the page actually leaves /your-details.
+            VfsBot._advance_off_your_details(page)
+
+        # Step 3 — pick a date and time, then run this route's post steps.
+        VfsBot._book_appointment(page, post_steps=self._post_appointment_steps)
+
     @staticmethod
-    def _proceed_to_booking(page) -> None:
+    def _advance_off_your_details(page, attempts: int = 6) -> bool:
         """
-        Drives the screens between Save and Step 3:
-        Summary → Continue → Generate/Verify OTP → Continue → calendar,
-        then books a date + time on Step 3.
+        Drives the 'Your Details' step to completion, robust to the Cloudflare
+        captcha that pops up here and swallows the click.
+
+        The captcha can interrupt EITHER the Save (leaving us on the editable
+        form, which only shows 'Save') OR the subsequent Continue (leaving us on
+        the summary, which shows 'Continue'). The URL stays '/your-details' the
+        whole time, so we can't use it as the exit signal. Instead each round we:
+        dismiss any captcha, then click whichever of Save / Continue is visible.
+        We're done once NEITHER button remains (we've moved to Services/calendar).
         """
-        # 1. 'Your Details Summary' screen → Continue (to the OTP step).
-        if not VfsBot._click_button(page, "Continue", "to OTP step"):
-            return
-        page.wait_for_timeout(3000)
+        for attempt in range(1, attempts + 1):
+            VfsBot._dismiss_captcha(page)
+            page.wait_for_timeout(1500)
 
-        # 2. OTP: generate, prompt the user, fill, verify.
-        if not VfsBot._handle_otp(page):
-            return
+            save_btn = page.get_by_role("button", name="Save").filter(visible=True)
+            continue_btn = page.get_by_role("button", name="Continue").filter(visible=True)
 
-        # 3. Continue after OTP → Step 3.
-        if not VfsBot._click_button(page, "Continue", "to Book Appointment"):
-            return
-        page.wait_for_timeout(3000)
+            try:
+                has_save = save_btn.count() > 0
+            except Exception:
+                has_save = False
+            try:
+                has_continue = continue_btn.count() > 0
+            except Exception:
+                has_continue = False
 
-        # 4. Step 3 — pick a date and time, then Continue.
-        VfsBot._book_appointment(page)
+            # Neither button left → the step is done, we've advanced.
+            if not has_save and not has_continue:
+                logging.info(f"Left 'Your Details' after attempt {attempt}: {page.url}")
+                page.wait_for_timeout(2000)
+                return True
+
+            # Re-click whichever button is showing. Save first (it's the earlier
+            # state); only one is ever visible at a time.
+            if has_save:
+                logging.info(f"'Your Details' still on the form — re-clicking Save (try {attempt}).")
+                VfsBot._click_button(page, "Save", f"(re-save, try {attempt})")
+            elif has_continue:
+                logging.info(f"'Your Details' summary — clicking Continue (try {attempt}).")
+                VfsBot._click_button(page, "Continue", f"to Book Appointment (try {attempt})")
+
+            # Give the click time to land / a captcha time to appear, dismissing
+            # it as we wait.
+            for _ in range(4):  # ~12s
+                page.wait_for_timeout(3000)
+                VfsBot._dismiss_captcha(page)
+
+        logging.warning(
+            "Could not advance off 'Your Details' after retries — a captcha may need a manual solve."
+        )
+        VfsBot._take_screenshot(page, "ERROR_stuck_your_details")
+        return False
 
     @staticmethod
     def _handle_otp(page) -> bool:
@@ -671,12 +924,13 @@ class VfsBot(ABC):
         `[booking] appointment_date` or earliest available), a time slot
         (`appointment_time` or first available), then clicks Continue.
 
-        `post_steps` is the callable run after Step 3 (Services/insurance/Review);
-        it defaults to the base `_post_appointment_steps` but subclasses pass their
-        own so the static-method calls below dispatch to the right portal flow.
+        `post_steps` is the callable run after Step 3 (Services/insurance/Review).
+        Callers pass the bound `self._post_appointment_steps`, which consults the
+        route schema to decide whether the optional insurance step runs.
         """
         if post_steps is None:
-            post_steps = VfsBot._post_appointment_steps
+            logging.warning("No post_steps provided to _book_appointment; skipping post-Step-3 flow.")
+            return
         try:
             VfsBot._wait_for_loader(page)
             page.wait_for_selector("full-calendar", timeout=30000)
@@ -708,20 +962,106 @@ class VfsBot(ABC):
         # specific, so it lives in an overridable hook.
         post_steps(page)
 
-    @staticmethod
-    def _post_appointment_steps(page) -> None:
+    def _post_appointment_steps(self, page) -> None:
         """
         Steps after Step 3 'Book Appointment'. Base flow: Step 4 'Services'
-        (skip add-ons) → Step 5 'Review'. Portals with extra steps (e.g. the
-        Luxembourg travel-insurance step) override this.
+        (skip add-ons) → Step 5 'Review'. If the route schema defines an
+        `insurance` step, a travel-insurance form is filled (and 'Get quote'
+        clicked) between Services and Review (e.g. UAE→Luxembourg).
         """
         # Step 4 'Services' — skip the optional add-ons, just Continue.
         VfsBot._click_button(page, "Continue", "(Step 4 Services)")
         page.wait_for_timeout(3000)
         VfsBot._take_screenshot(page, "18_services")
 
-        # Step 5 'Review' — accept the T&Cs, then Pay Online.
+        # Optional travel-insurance step, when the schema declares one.
+        insurance_step = self._step("insurance")
+        if insurance_step:
+            self._fill_insurance(page, insurance_step)
+            # After the quote, VFS shows the insurance summary; a Continue click
+            # advances from there to the Review step.
+            VfsBot._click_button(page, "Continue", "(insurance -> Review)")
+            page.wait_for_timeout(3000)
+            VfsBot._take_screenshot(page, "18d_after_insurance_continue")
+
+        # Review step — accept the T&Cs, then Pay Online.
         VfsBot._complete_review(page)
+
+    def _fill_insurance(self, page, step: dict) -> None:
+        """
+        Fills the travel-insurance step from the schema step's `fields` and clicks
+        'Get quote'. The applicant checkbox, coverage radio and consent checkbox
+        are pre-selected by VFS; only the fields listed in the schema are filled.
+        If no field resolves to a value, the form is left untouched and we just
+        click 'Get quote'.
+        """
+        fields = step.get("fields", [])
+
+        try:
+            VfsBot._wait_for_loader(page)
+            page.locator(
+                "app-tmiform input[formcontrolname='addressLine1']"
+            ).first.wait_for(state="visible", timeout=30000)
+        except Exception:
+            logging.warning(
+                "Travel Insurance form did not appear; trying 'Get quote' anyway."
+            )
+            VfsBot._take_screenshot(page, "ERROR_insurance_form")
+
+        if any(VfsBot._resolve_value(f) for f in fields):
+            VfsBot._fill_fields(page, fields)
+        else:
+            logging.info(
+                "No [insurance] details configured — clicking 'Get quote' without filling."
+            )
+
+        VfsBot._take_screenshot(page, "18b_insurance_filled")
+
+        if VfsBot._click_button(page, "Get quote", "(insurance -> Review)"):
+            page.wait_for_timeout(3000)
+            VfsBot._take_screenshot(page, "18c_after_get_quote")
+
+    @staticmethod
+    def _tick_review_checkbox(page, cb, index: int) -> bool:
+        """
+        Ticks one Material checkbox robustly. `check(force=True)` sometimes
+        no-ops because the native input is hidden behind the styled box, so if
+        the state doesn't change we fall back to clicking the associated <label>
+        (which is what a real user clicks). Returns True if it ends up checked.
+        """
+        try:
+            cb.scroll_into_view_if_needed(timeout=10000)
+            if cb.is_checked():
+                return True
+            # Primary: force-check the native input.
+            try:
+                cb.check(force=True, timeout=8000)
+            except Exception:
+                pass
+            if cb.is_checked():
+                return True
+
+            # Fallback: click the <label for="..."> tied to this input's id.
+            cb_id = cb.get_attribute("id")
+            if cb_id:
+                label = page.locator(f"label[for='{cb_id}']").first
+                if label.count() > 0:
+                    label.click(timeout=8000)
+                    page.wait_for_timeout(400)
+                    if cb.is_checked():
+                        return True
+
+            # Last resort: click the styled checkbox box next to the input.
+            box = cb.locator(
+                "xpath=following-sibling::div[contains(@class,'mdc-checkbox__background')]"
+            )
+            if box.count() > 0:
+                box.first.click(force=True, timeout=8000)
+                page.wait_for_timeout(400)
+            return cb.is_checked()
+        except Exception as e:
+            logging.warning(f"Could not tick review checkbox {index}: {e}")
+            return False
 
     @staticmethod
     def _complete_review(page) -> None:
@@ -733,7 +1073,8 @@ class VfsBot(ABC):
         VfsBot._wait_for_loader(page)
         page.wait_for_timeout(1500)
 
-        # Both checkboxes share the same id, so target the native inputs by index.
+        # The two Review checkboxes share the same id, so target the native
+        # inputs by index.
         checkboxes = page.locator("input.mdc-checkbox__native-control")
         try:
             count = checkboxes.count()
@@ -746,14 +1087,8 @@ class VfsBot(ABC):
 
         accepted = 0
         for i in range(count):
-            cb = checkboxes.nth(i)
-            try:
-                cb.scroll_into_view_if_needed(timeout=10000)
-                # The native input is hidden behind the styled mdc box, so force it.
-                cb.check(force=True, timeout=10000)
+            if VfsBot._tick_review_checkbox(page, checkboxes.nth(i), i):
                 accepted += 1
-            except Exception as e:
-                logging.warning(f"Could not tick checkbox {i}: {e}")
         logging.info(f"Accepted {accepted}/{count} review checkbox(es)")
         VfsBot._take_screenshot(page, "19_review_accepted")
 

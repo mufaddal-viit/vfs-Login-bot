@@ -1,0 +1,4 @@
+{
+  "description": "UAE -> Denmark. Standard VFS flow (extends _default): basic Step-2 fields, OTP, Services -> Review, no insurance step. Adjust here if the Denmark portal asks for extra fields.",
+  "extends": "_default"
+}

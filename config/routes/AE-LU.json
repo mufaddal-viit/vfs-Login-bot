@@ -1,0 +1,39 @@
+{
+  "description": "UAE -> Luxembourg. Extra Step-2 fields (gender, DOB, passport expiry, contact, email), NO OTP step, and a Travel Insurance step between Services and Review.",
+  "extends": "_default",
+  "otp": false,
+  "steps": [
+    {
+      "name": "your-details",
+      "countdown_ms": 33000,
+      "fields": [
+        { "type": "text",           "placeholder": "Enter your first name",  "config": "applicant.first_name" },
+        { "type": "text",           "placeholder": "Please enter last name.", "config": "applicant.last_name" },
+        { "type": "label-dropdown", "label": "Gender",                       "config": "applicant.gender" },
+        { "type": "date",           "selector": "#dateOfBirth",              "config": "applicant.date_of_birth",      "label": "Date Of Birth" },
+        { "type": "label-dropdown", "label": "Current Nationality",          "config": "applicant.nationality" },
+        { "type": "text",           "placeholder": "Enter passport number",  "config": "applicant.passport_number" },
+        { "type": "date",           "selector": "#passportExpirtyDate",      "config": "applicant.passport_expiry_date", "label": "Passport Expiry Date" },
+        { "type": "text",           "placeholder": "44",                     "config": "applicant.country_code" },
+        { "type": "text",           "placeholder": "012345648382",           "config": "applicant.contact_number" },
+        { "type": "text",           "placeholder": "Enter Email Address",    "config": "applicant.email", "fallback": "vfs-credential.email" }
+      ]
+    },
+    {
+      "name": "insurance",
+      "fields": [
+        { "type": "text",         "selector": "input[formcontrolname='addressLine1']", "config": "insurance.address_line1", "label": "Address line 1" },
+        { "type": "text",         "selector": "input[formcontrolname='addressLine2']", "config": "insurance.address_line2", "label": "Address line 2" },
+        { "type": "text",         "selector": "input[formcontrolname='state']",        "config": "insurance.state",         "label": "State" },
+        { "type": "text",         "selector": "input[formcontrolname='city']",         "config": "insurance.city",          "label": "City" },
+        { "type": "text",         "selector": "input[formcontrolname='postCode']",     "config": "insurance.postcode",      "label": "Postcode" },
+        { "type": "date",         "selector": "input[formcontrolname='startdate']",    "config": "insurance.start_date",    "label": "Start date" },
+        { "type": "date",         "selector": "input[formcontrolname='enddate']",      "config": "insurance.end_date",      "label": "End date" },
+        { "type": "mat-dropdown", "control": "countryofentry",                          "config": "insurance.country_of_entry" },
+        { "type": "radio",        "name": "Worldwide",                                  "config": "insurance.coverage_type", "skip_if": "schengen" },
+        { "type": "checkbox",     "value": true, "value_attr": "Processing for providing Travel Medical Insurance", "label": "Cherehapa data-sharing consent (A05)" }
+      ]
+    }
+  ]
+}
+    
