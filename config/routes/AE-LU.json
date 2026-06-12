@@ -33,6 +33,25 @@
         { "type": "radio",        "name": "Worldwide",                                  "config": "insurance.coverage_type", "skip_if": "schengen" },
         { "type": "checkbox",     "value": true, "value_attr": "Processing for providing Travel Medical Insurance", "label": "Cherehapa data-sharing consent (A05)" }
       ]
+    },
+    {
+      "name": "payment",
+      "fields": [
+        { "type": "card-radio",     "selector_visa": "#card_type_001", "selector_mastercard": "#card_type_002", "config": "payment.card_type", "label": "Card Type" },
+        { "type": "text",           "selector": "#bill_to_forename",          "config": "payment.bill_first_name",    "label": "Billing First Name" },
+        { "type": "text",           "selector": "#bill_to_surname",           "config": "payment.bill_last_name",     "label": "Billing Last Name" },
+        { "type": "text",           "selector": "#bill_to_address_line1",     "config": "payment.bill_address_line1", "label": "Billing Address 1" },
+        { "type": "text",           "selector": "#bill_to_address_line2",     "config": "payment.bill_address_line2", "label": "Billing Address 2" },
+        { "type": "text",           "selector": "#bill_to_address_city",      "config": "payment.bill_city",          "label": "Billing City" },
+        { "type": "native-select",  "selector": "#bill_to_address_country",   "config": "payment.bill_country",       "label": "Billing Country" },
+        { "type": "text",           "selector": "#bill_to_address_postal_code","config": "payment.bill_postal_code",  "label": "Billing Postal Code" },
+        { "type": "text",           "selector": "#bill_to_phone",             "config": "payment.bill_phone",         "label": "Billing Phone" },
+        { "type": "text",           "selector": "#bill_to_email",             "config": "payment.bill_email", "fallback": "vfs-credential.email", "label": "Billing Email" },
+        { "type": "text",           "selector": "#card_number",               "config": "payment.card_number",        "label": "Card Number" },
+        { "type": "native-select",  "selector": "#card_expiry_month",         "config": "payment.card_expiry_month",  "label": "Expiry Month" },
+        { "type": "native-select",  "selector": "#card_expiry_year",          "config": "payment.card_expiry_year",   "label": "Expiry Year" },
+        { "type": "text",           "selector": "#card_cvn",                  "config": "payment.card_cvn",           "label": "CVN" }
+      ]
     }
   ]
 }

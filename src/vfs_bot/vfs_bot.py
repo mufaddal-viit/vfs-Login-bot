@@ -12,6 +12,11 @@ from src.utils.route_schema import get_route_schema
 
 SCREENSHOT_DIR = "screenshots"
 
+# When False, the per-step `_take_screenshot` calls are no-ops; only the single
+# final screenshot (taken at the end of run()) is written. Flip to True for
+# step-by-step debugging.
+SCREENSHOTS_ENABLED = False
+
 USERNAME_SELECTOR = (
     "input[formcontrolname='username'], #mat-input-0, input[placeholder*='email']"
 )
@@ -110,6 +115,9 @@ class VfsBot(ABC):
                 logging.info("Flow completed. Check screenshots for result.")
             except Exception as e:
                 logging.error(f"Login error details: {e}")
+
+            # Single final screenshot capturing wherever the flow ended up.
+            self._take_final_screenshot(page, "final")
 
             # Intentionally leave the page and browser open so you can continue
             # manually from where the bot stopped. Close the Chrome tab/window
@@ -272,16 +280,53 @@ class VfsBot(ABC):
         intercepts pointer events, so clicking while it is up times out. Returns
         immediately if no loader is present.
 
-        Also clears any Cloudflare 'Verify Captcha' dialog first — it can pop up
-        at any step and blocks the form until dismissed.
+        Also clears any Cloudflare 'Verify Captcha' dialog and the VFS 'please
+        wait before continuing' reminder first — either can pop up at any step
+        and blocks the form until dismissed.
         """
         VfsBot._dismiss_captcha(page)
+        VfsBot._dismiss_wait_dialog(page)
         try:
             page.locator("ngx-ui-loader .ngx-overlay.loading-foreground").wait_for(
                 state="hidden", timeout=timeout
             )
         except Exception:
             pass  # loader absent or already cleared
+
+    @staticmethod
+    def _dismiss_wait_dialog(page) -> None:
+        """
+        Dismisses VFS's intermittent reminder dialogs that block a step — e.g.
+        'Please wait for some time before saving and continuing' or the
+        'booking request received / payment under process' reminder. These are
+        mat-dialogs whose only action is a 'Continue' (or 'OK') button; clicking
+        it lets the flow proceed. Silent no-op when none is present.
+        """
+        try:
+            dialog = page.locator("mat-dialog-container, .mat-mdc-dialog-container")
+            if dialog.count() == 0 or not dialog.first.is_visible():
+                return
+            text = (dialog.first.inner_text() or "").lower()
+        except Exception:
+            return
+
+        # Only handle the informational 'wait/reminder' dialogs here — leave the
+        # Cloudflare captcha dialog to its dedicated handler.
+        if "captcha" in text:
+            return
+        if not any(k in text for k in ("wait", "reminder", "received", "please")):
+            return
+
+        for label in ("Continue", "OK", "Ok", "Close"):
+            try:
+                btn = dialog.first.get_by_role("button", name=label).first
+                if btn.count() > 0 and btn.is_visible():
+                    btn.click(timeout=5000)
+                    logging.info(f"Dismissed VFS reminder dialog via '{label}'.")
+                    page.wait_for_timeout(1500)
+                    return
+            except Exception:
+                continue
 
     @staticmethod
     def _dismiss_captcha(page) -> None:
@@ -658,6 +703,10 @@ class VfsBot(ABC):
                 ok = VfsBot._check_radio(page, field, value)
             elif ftype == "checkbox":
                 ok = VfsBot._check_checkbox(page, field)
+            elif ftype == "native-select":
+                ok = VfsBot._select_native(page, field["selector"], value, label)
+            elif ftype == "card-radio":
+                ok = VfsBot._select_card_type(page, field, value)
             else:
                 logging.warning(f"Unknown field type '{ftype}' — skipping.")
                 ok = True  # don't fail the form over a schema typo
@@ -719,6 +768,52 @@ class VfsBot(ABC):
         except Exception as e:
             logging.warning(f"Could not tick checkbox '{label}': {e}")
             VfsBot._take_screenshot(page, "ERROR_checkbox")
+            return False
+
+    @staticmethod
+    def _select_native(page, selector: str, value: str, label: str = "") -> bool:
+        """
+        Selects an option in a plain HTML <select> (e.g. the CyberSource country
+        and card-expiry dropdowns). Tries by option value first (e.g. 'AE',
+        '06', '2030'), then by visible label as a fallback.
+        """
+        label = label or selector
+        try:
+            el = page.locator(selector).first
+            el.scroll_into_view_if_needed(timeout=10000)
+            try:
+                el.select_option(value=value, timeout=8000)
+            except Exception:
+                el.select_option(label=value, timeout=8000)
+            logging.info(f"Selected '{value}' for '{label}'")
+            page.wait_for_timeout(300)
+            return True
+        except Exception as e:
+            logging.warning(f"Could not select '{value}' for '{label}': {e}")
+            return False
+
+    @staticmethod
+    def _select_card_type(page, field: dict, value: str) -> bool:
+        """
+        Selects the CyberSource card-type radio (Visa / Mastercard) from a config
+        value like 'visa' or 'mastercard'.
+        """
+        v = value.strip().lower()
+        if v in ("visa", "001"):
+            selector = field.get("selector_visa", "#card_type_001")
+        elif v in ("mastercard", "master", "002"):
+            selector = field.get("selector_mastercard", "#card_type_002")
+        else:
+            logging.warning(f"Unknown card_type '{value}' — expected visa/mastercard.")
+            return False
+        try:
+            radio = page.locator(selector).first
+            radio.scroll_into_view_if_needed(timeout=10000)
+            radio.check(timeout=8000)
+            logging.info(f"Selected card type '{value}'")
+            return True
+        except Exception as e:
+            logging.warning(f"Could not select card type '{value}': {e}")
             return False
 
     @staticmethod
@@ -789,18 +884,24 @@ class VfsBot(ABC):
         We're done once NEITHER button remains (we've moved to Services/calendar).
         """
         for attempt in range(1, attempts + 1):
+            # Clear blocking overlays first. The 'please wait before continuing'
+            # reminder genuinely wants a real delay, so after dismissing it we
+            # pause before acting — re-clicking immediately is what bounces the
+            # form back to the editable state.
+            had_reminder = VfsBot._reminder_visible(page)
             VfsBot._dismiss_captcha(page)
+            VfsBot._dismiss_wait_dialog(page)
+            if had_reminder:
+                logging.info("Reminder dialog seen — waiting 20s before next action.")
+                VfsBot._wait_with_captcha_check(page, 20000)
             page.wait_for_timeout(1500)
 
-            save_btn = page.get_by_role("button", name="Save").filter(visible=True)
-            continue_btn = page.get_by_role("button", name="Continue").filter(visible=True)
-
             try:
-                has_save = save_btn.count() > 0
+                has_save = page.get_by_role("button", name="Save").filter(visible=True).count() > 0
             except Exception:
                 has_save = False
             try:
-                has_continue = continue_btn.count() > 0
+                has_continue = page.get_by_role("button", name="Continue").filter(visible=True).count() > 0
             except Exception:
                 has_continue = False
 
@@ -810,26 +911,39 @@ class VfsBot(ABC):
                 page.wait_for_timeout(2000)
                 return True
 
-            # Re-click whichever button is showing. Save first (it's the earlier
-            # state); only one is ever visible at a time.
+            # Click whichever button is showing (only one is visible at a time).
+            # Save = still on the editable form; Continue = on the summary.
             if has_save:
-                logging.info(f"'Your Details' still on the form — re-clicking Save (try {attempt}).")
-                VfsBot._click_button(page, "Save", f"(re-save, try {attempt})")
-            elif has_continue:
+                logging.info(f"'Your Details' form — clicking Save (try {attempt}).")
+                VfsBot._click_button(page, "Save", f"(save, try {attempt})")
+            else:
                 logging.info(f"'Your Details' summary — clicking Continue (try {attempt}).")
                 VfsBot._click_button(page, "Continue", f"to Book Appointment (try {attempt})")
 
-            # Give the click time to land / a captcha time to appear, dismissing
-            # it as we wait.
+            # Let the click settle and watch for the reminder/captcha it triggers.
             for _ in range(4):  # ~12s
                 page.wait_for_timeout(3000)
                 VfsBot._dismiss_captcha(page)
 
         logging.warning(
-            "Could not advance off 'Your Details' after retries — a captcha may need a manual solve."
+            "Could not advance off 'Your Details' after retries — a captcha/reminder may need a manual solve."
         )
         VfsBot._take_screenshot(page, "ERROR_stuck_your_details")
         return False
+
+    @staticmethod
+    def _reminder_visible(page) -> bool:
+        """True if a VFS reminder/please-wait mat-dialog (not the captcha) is up."""
+        try:
+            dialog = page.locator("mat-dialog-container, .mat-mdc-dialog-container")
+            if dialog.count() == 0 or not dialog.first.is_visible():
+                return False
+            text = (dialog.first.inner_text() or "").lower()
+            return "captcha" not in text and any(
+                k in text for k in ("wait", "reminder", "received", "please")
+            )
+        except Exception:
+            return False
 
     @staticmethod
     def _handle_otp(page) -> bool:
@@ -985,7 +1099,12 @@ class VfsBot(ABC):
             VfsBot._take_screenshot(page, "18d_after_insurance_continue")
 
         # Review step — accept the T&Cs, then Pay Online.
-        VfsBot._complete_review(page)
+        reached_gateway = VfsBot._complete_review(page)
+
+        # Optional schema-driven payment step (CyberSource checkout).
+        payment_step = self._step("payment")
+        if reached_gateway and payment_step:
+            self._complete_payment(page, payment_step)
 
     def _fill_insurance(self, page, step: dict) -> None:
         """
@@ -1097,6 +1216,68 @@ class VfsBot(ABC):
             page.wait_for_timeout(4000)
             VfsBot._take_screenshot(page, "20_pay_online")
             logging.info(f"Reached payment gateway. URL: {page.url}")
+            return True
+        return False
+
+    def _complete_payment(self, page, step: dict) -> None:
+        """
+        Drives the payment tail after Review's 'Pay Online':
+          1. 'Payment Disclaimer' page → click 'Continue'
+          2. redirect to CyberSource Secure Acceptance (.../checkout)
+          3. fill the billing + card form from the `payment` schema step
+          4. click 'Pay' to submit the real charge.
+
+        If no card number is configured the form is left untouched and the
+        browser stays open for a manual payment (so a blank config never submits
+        an empty/invalid payment).
+        """
+        # 1. Payment Disclaimer → Continue. (Pay Online was clicked in review.)
+        page.wait_for_timeout(3000)
+        VfsBot._dismiss_captcha(page)
+        VfsBot._click_button(page, "Continue", "(Payment Disclaimer)")
+
+        # 2. Wait for the CyberSource checkout to load.
+        try:
+            page.wait_for_url("**secureacceptance.cybersource.com/**", timeout=60000)
+            logging.info(f"Reached CyberSource checkout: {page.url}")
+        except Exception:
+            logging.warning(
+                "Did not reach the CyberSource checkout page; stopping before payment."
+            )
+            VfsBot._take_final_screenshot(page, "ERROR_no_cybersource")
+            return
+
+        try:
+            page.wait_for_selector("#card_number", timeout=30000)
+        except Exception:
+            logging.warning("CyberSource card form did not render; stopping.")
+            VfsBot._take_final_screenshot(page, "ERROR_cybersource_form")
+            return
+        page.wait_for_timeout(1500)
+
+        fields = step.get("fields", [])
+        card_number = get_config_value("payment", "card_number")
+        if not card_number:
+            logging.info(
+                "No [payment] card_number configured — leaving the CyberSource form "
+                "for manual entry. Browser stays open."
+            )
+            return
+
+        # 3. Fill billing + card details.
+        VfsBot._fill_fields(page, fields)
+        page.wait_for_timeout(1000)
+
+        # 4. Submit the payment ('Pay' = input[name='commit']).
+        try:
+            pay = page.locator("input[name='commit'].pay_button, input[name='commit'][value='Pay']").first
+            pay.scroll_into_view_if_needed(timeout=10000)
+            pay.click(timeout=15000)
+            logging.info("Clicked 'Pay' — payment submitted.")
+            page.wait_for_timeout(6000)
+            logging.info(f"Post-payment URL: {page.url}")
+        except Exception as e:
+            logging.warning(f"Could not click 'Pay': {e}")
 
     @staticmethod
     def _pick_appointment_date(page) -> bool:
@@ -1173,9 +1354,24 @@ class VfsBot(ABC):
             return False
 
     @staticmethod
+    def _pace(page) -> None:
+        """
+        Brief deliberate pause before an action. VFS shows a 'please wait before
+        saving and continuing' reminder when steps are clicked too quickly, so we
+        slow the pace down. Tunable via [browser] action_delay_ms (default 2500).
+        """
+        try:
+            delay = int(get_config_value("browser", "action_delay_ms", "2500"))
+        except (TypeError, ValueError):
+            delay = 2500
+        if delay > 0:
+            page.wait_for_timeout(delay)
+
+    @staticmethod
     def _click_button(page, name: str, context: str = "") -> bool:
         """Clicks a visible button by its accessible name; logs and screenshots on failure."""
         try:
+            VfsBot._pace(page)
             VfsBot._wait_for_loader(page)
             button = page.get_by_role("button", name=name).filter(visible=True).first
             button.scroll_into_view_if_needed(timeout=10000)
@@ -1190,6 +1386,18 @@ class VfsBot(ABC):
 
     @staticmethod
     def _take_screenshot(page, name: str):
+        """Per-step screenshot — a no-op unless SCREENSHOTS_ENABLED is True."""
+        if not SCREENSHOTS_ENABLED:
+            return
+        VfsBot._write_screenshot(page, name)
+
+    @staticmethod
+    def _take_final_screenshot(page, name: str = "final"):
+        """Always writes one screenshot (used at the end of the run)."""
+        VfsBot._write_screenshot(page, name)
+
+    @staticmethod
+    def _write_screenshot(page, name: str):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = os.path.join(SCREENSHOT_DIR, f"{timestamp}_{name}.png")
         try:
